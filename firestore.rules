@@ -11,38 +11,42 @@ service cloud.firestore {
       return request.auth.uid == uid;
     }
 
+    // Read the caller's role from their Firestore user document.
+    // Custom JWT claims are never set in this project, so we read from Firestore.
+    function callerRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
     function isAdmin() {
-      return request.auth.token.role == 'admin';
+      return isSignedIn() && callerRole() == 'admin';
     }
 
     function isBank() {
-      return request.auth.token.role == 'bank';
+      return isSignedIn() && callerRole() == 'bank';
     }
 
     function isApplicant() {
-      return request.auth.token.role == 'applicant';
+      return isSignedIn() && callerRole() == 'applicant';
     }
 
     // ─── Users ──────────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
-      allow create: if isSignedIn() && isOwner(userId);
+      allow read:   if isSignedIn() && (isOwner(userId) || isAdmin());
+      // Allow: self-create (normal signup / secondary-auth creation) OR admin provisioning
+      allow create: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow delete: if isAdmin();
     }
 
     // ─── BG Applications ────────────────────────────────────────────────────
     match /bg_applications/{applicationId} {
-      // Applicant can read their own applications
       allow read: if isSignedIn() && (
         resource.data.applicant_id == request.auth.uid ||
         isBank() ||
         isAdmin()
       );
-      // Applicant can create applications
       allow create: if isSignedIn() && isApplicant() &&
         request.resource.data.applicant_id == request.auth.uid;
-      // Applicant can update their own DRAFT applications; bank/admin can update any
       allow update: if isSignedIn() && (
         (isApplicant() && resource.data.applicant_id == request.auth.uid &&
           resource.data.status == 'DRAFT') ||
