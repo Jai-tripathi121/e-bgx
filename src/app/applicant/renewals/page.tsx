@@ -1,32 +1,59 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
-import { mockBGApplications } from "@/lib/mock-data";
+import { Card, CardContent } from "@/components/ui/card";
+import { getApplicantBGs, FirestoreBG } from "@/lib/firestore";
 import { formatINR, formatDate } from "@/lib/utils";
-import { RefreshCw, X, Upload, AlertCircle } from "lucide-react";
-import { BGApplication } from "@/types";
+import { RefreshCw, X, Upload, AlertCircle, Inbox } from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
 
 export default function RenewalsPage() {
-  const [amendBG, setAmendBG] = useState<BGApplication | null>(null);
+  const { user } = useAuth();
+  const [applications, setApplications] = useState<FirestoreBG[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [amendBG, setAmendBG] = useState<FirestoreBG | null>(null);
   const [extendDate, setExtendDate] = useState(false);
   const [changeAmount, setChangeAmount] = useState(false);
   const [newDate, setNewDate] = useState("");
   const [newAmount, setNewAmount] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const eligibleBGs = mockBGApplications.filter((b) => b.status === "ISSUED" || b.status === "AMENDED");
+  useEffect(() => {
+    if (!user) return;
+    getApplicantBGs(user.uid)
+      .then(setApplications)
+      .catch(() => setApplications([]))
+      .finally(() => setLoadingData(false));
+  }, [user]);
+
+  const eligibleBGs = applications.filter((b) => b.status === "ISSUED" || b.status === "AMENDED");
 
   const handleSubmit = async () => {
     setLoading(true);
     await new Promise((res) => setTimeout(res, 1200));
     toast.success("Amendment request submitted. You will receive new payment instructions from the bank.");
     setAmendBG(null);
+    setExtendDate(false);
+    setChangeAmount(false);
+    setNewDate("");
+    setNewAmount("");
     setLoading(false);
   };
+
+  if (loadingData) {
+    return (
+      <>
+        <PortalHeader title="Renewals & Amendments" subtitle="Extend validity or modify value of active BGs" />
+        <div className="portal-content flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-2 border-navy-800 border-t-transparent rounded-full animate-spin" />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -39,44 +66,60 @@ export default function RenewalsPage() {
           </p>
         </div>
 
-        <Table>
-          <TableHead>
-            <tr>
-              <TableHeader>Issue Date</TableHeader>
-              <TableHeader>BG Reference</TableHeader>
-              <TableHeader>Beneficiary</TableHeader>
-              <TableHeader>Current Amount</TableHeader>
-              <TableHeader>Expires On</TableHeader>
-              <TableHeader>Action</TableHeader>
-            </tr>
-          </TableHead>
-          <TableBody>
-            {eligibleBGs.map((bg) => (
-              <TableRow key={bg.bg_id}>
-                <TableCell className="text-xs text-gray-400">{bg.issued_at ? formatDate(bg.issued_at) : "—"}</TableCell>
-                <TableCell>
-                  <span className="font-mono font-semibold text-navy-700 dark:text-navy-200">#{bg.bg_id}</span>
-                </TableCell>
-                <TableCell>{bg.beneficiary_name}</TableCell>
-                <TableCell><span className="font-semibold tabular">{formatINR(bg.amount_inr, true)}</span></TableCell>
-                <TableCell>
-                  <div>
-                    <p>{bg.expiry_date ? formatDate(bg.expiry_date) : "—"}</p>
-                    {bg.expiry_date && (new Date(bg.expiry_date).getTime() - Date.now()) / 86400000 <= 30 && (
-                      <p className="text-xs text-red-500 font-medium">Expiring soon!</p>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex gap-1.5">
-                    <Button size="xs" variant="outline" icon={<RefreshCw size={12} />} onClick={() => setAmendBG(bg)}>Renew</Button>
-                    <Button size="xs" variant="ghost" icon={<RefreshCw size={12} />} onClick={() => setAmendBG(bg)}>Amend</Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        {eligibleBGs.length === 0 ? (
+          <Card>
+            <CardContent>
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-14 h-14 rounded-full bg-gray-100 dark:bg-navy-800 flex items-center justify-center mb-4">
+                  <Inbox size={24} className="text-gray-400" />
+                </div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">No Active BGs to Renew</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 max-w-xs">
+                  Issued bank guarantees eligible for renewal or amendment will appear here.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Table>
+            <TableHead>
+              <tr>
+                <TableHeader>Issue Date</TableHeader>
+                <TableHeader>BG Reference</TableHeader>
+                <TableHeader>Beneficiary</TableHeader>
+                <TableHeader>Current Amount</TableHeader>
+                <TableHeader>Expires On</TableHeader>
+                <TableHeader>Action</TableHeader>
+              </tr>
+            </TableHead>
+            <TableBody>
+              {eligibleBGs.map((bg) => (
+                <TableRow key={bg.bg_id}>
+                  <TableCell className="text-xs text-gray-400">{bg.issued_at ? formatDate(bg.issued_at) : "—"}</TableCell>
+                  <TableCell>
+                    <span className="font-mono font-semibold text-navy-700 dark:text-navy-200">#{bg.bg_id}</span>
+                  </TableCell>
+                  <TableCell>{bg.beneficiary_name}</TableCell>
+                  <TableCell><span className="font-semibold tabular">{formatINR(bg.amount_inr, true)}</span></TableCell>
+                  <TableCell>
+                    <div>
+                      <p>{bg.expiry_date ? formatDate(bg.expiry_date) : "—"}</p>
+                      {bg.expiry_date && (new Date(bg.expiry_date).getTime() - Date.now()) / 86400000 <= 30 && (
+                        <p className="text-xs text-red-500 font-medium">Expiring soon!</p>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1.5">
+                      <Button size="xs" variant="outline" icon={<RefreshCw size={12} />} onClick={() => setAmendBG(bg)}>Renew</Button>
+                      <Button size="xs" variant="ghost" icon={<RefreshCw size={12} />} onClick={() => setAmendBG(bg)}>Amend</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
 
         {/* Amendment Modal */}
         {amendBG && (

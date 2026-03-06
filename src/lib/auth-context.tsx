@@ -15,6 +15,7 @@ import { auth, db } from "./firebase";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type UserRole = "applicant" | "bank" | "admin";
+export type KYCStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export interface UserProfile {
   uid: string;
@@ -36,6 +37,9 @@ export interface UserProfile {
   branchCode?: string;
   officerName?: string;
   bankStatus?: "ACTIVE" | "PENDING" | "SUSPENDED";
+  // KYC & profile completion
+  profileComplete?: boolean;
+  kycStatus?: KYCStatus;
   createdAt?: any;
 }
 
@@ -46,9 +50,6 @@ export interface RegisterData {
   password: string;
   pan?: string;
   gstin?: string;
-  bankName?: string;
-  branchCode?: string;
-  officerName?: string;
 }
 
 interface AuthContextType {
@@ -59,6 +60,7 @@ interface AuthContextType {
   loginWithGoogle: (portal: UserRole) => Promise<void>;
   register: (data: RegisterData, portal: UserRole) => Promise<void>;
   logout: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -70,16 +72,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const fetchProfile = async (uid: string) => {
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      setProfile(snap.exists() ? (snap.data() as UserProfile) : null);
+    } catch {
+      setProfile(null);
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
-        try {
-          const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-          setProfile(snap.exists() ? (snap.data() as UserProfile) : null);
-        } catch {
-          setProfile(null);
-        }
+        await fetchProfile(firebaseUser.uid);
       } else {
         setProfile(null);
       }
@@ -106,6 +112,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         displayName: result.user.displayName || "",
         companyName: result.user.displayName || "",
         role: portal,
+        profileComplete: false,
+        kycStatus: "PENDING",
         createdAt: serverTimestamp(),
       };
       await setDoc(userRef, newProfile);
@@ -122,18 +130,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       companyName: data.companyName,
       role: portal,
       mobile: data.mobile,
+      profileComplete: false,
+      kycStatus: "PENDING",
       createdAt: serverTimestamp(),
-      ...(portal === "applicant"
-        ? { pan: data.pan || "", gstin: data.gstin || "" }
-        : {}),
-      ...(portal === "bank"
-        ? {
-            bankName: data.bankName || "",
-            branchCode: data.branchCode || "",
-            officerName: data.officerName || "",
-            bankStatus: "PENDING" as const,
-          }
-        : {}),
     };
     await setDoc(doc(db, "users", cred.user.uid), newProfile);
     setProfile(newProfile);
@@ -144,8 +143,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
   };
 
+  const refreshProfile = async () => {
+    if (user) await fetchProfile(user.uid);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, login, loginWithGoogle, register, logout }}>
+    <AuthContext.Provider value={{ user, profile, loading, login, loginWithGoogle, register, logout, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

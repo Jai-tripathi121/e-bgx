@@ -5,7 +5,7 @@ import { PortalHeader } from "@/components/shared/portal-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea, Select } from "@/components/ui/input";
-import { CheckCircle2, Upload, FileText, AlertCircle, X } from "lucide-react";
+import { CheckCircle2, Upload, FileText, AlertCircle, X, Clock, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/auth-context";
@@ -43,11 +43,11 @@ export default function ApplyBGPage() {
     companyName: profile?.companyName || "",
     pan: profile?.pan || "",
     gstin: profile?.gstin || "",
-    cin: "",
-    address: "",
-    city: "",
-    state: "",
-    pincode: "",
+    cin: profile?.cin || "",
+    address: profile?.address || "",
+    city: profile?.city || "",
+    state: profile?.state || "",
+    pincode: profile?.pincode || "",
     // Step 2
     beneficiaryName: "",
     tenderNumber: "",
@@ -93,11 +93,65 @@ export default function ApplyBGPage() {
   };
 
   const canProceed = step === 2 ?
-    form.beneficiaryName && form.tenderNumber && form.bgType && form.amount && form.validity && form.requiredBy && form.beneficiaryAddress
+    !!(form.beneficiaryName && form.tenderNumber && form.bgType && form.amount && form.validity && form.requiredBy && form.beneficiaryAddress)
     : step === 3 ? !!uploadedDocs["tender"]
     : step === 4 ? declaration
     : true;
 
+  // ── KYC Gate ────────────────────────────────────────────────────────────────
+  if (!profile?.kycStatus || profile.kycStatus !== "APPROVED") {
+    return (
+      <>
+        <PortalHeader title="Apply New BG" subtitle="New Bank Guarantee Application" />
+        <div className="portal-content max-w-lg mx-auto">
+          <div className="flex flex-col items-center justify-center text-center py-16 px-8 bg-white dark:bg-navy-900 rounded-2xl border border-gray-200 dark:border-navy-700 shadow-sm">
+            {profile?.kycStatus === "REJECTED" ? (
+              <>
+                <div className="w-16 h-16 rounded-full bg-red-100 dark:bg-red-950 flex items-center justify-center mb-4">
+                  <AlertCircle size={28} className="text-red-500" />
+                </div>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">KYC Rejected</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                  Your KYC application was not approved. Please contact the e-BGX admin team to resolve the issue before applying for BGs.
+                </p>
+                <a href="mailto:support@e-bgx.com" className="text-sm text-navy-600 dark:text-navy-300 underline">
+                  Contact Support →
+                </a>
+              </>
+            ) : profile?.profileComplete === false ? (
+              <>
+                <div className="w-16 h-16 rounded-full bg-amber-100 dark:bg-amber-950 flex items-center justify-center mb-4">
+                  <AlertCircle size={28} className="text-amber-500" />
+                </div>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Complete Your Profile First</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                  You need to complete your profile and pass KYC verification before you can apply for bank guarantees.
+                </p>
+                <Button onClick={() => router.push("/applicant/complete-profile")} icon={<ShieldCheck size={14} />}>
+                  Complete Profile
+                </Button>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-950 flex items-center justify-center mb-4">
+                  <Clock size={28} className="text-blue-500" />
+                </div>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">KYC Pending Approval</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                  Your profile has been submitted and is under review by our admin team. You will be notified once your KYC is approved.
+                </p>
+                <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 text-xs text-blue-700 dark:text-blue-400 text-left w-full">
+                  Typical approval time: <strong>1–2 business days</strong>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ── BG Application Form ──────────────────────────────────────────────────────
   return (
     <>
       <PortalHeader title="Apply New BG" subtitle="New Bank Guarantee Application" />
@@ -136,9 +190,9 @@ export default function ApplyBGPage() {
             {/* Step 1: Company & KYC */}
             {step === 1 && (
               <div className="space-y-4">
-                <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-900 flex gap-2 text-sm text-blue-700 dark:text-blue-400">
-                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                  Company details are pre-filled from your verified profile. Contact admin to update KYC details.
+                <div className="p-3 rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900 flex gap-2 text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
+                  Company details are pre-filled from your KYC-verified profile.
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">

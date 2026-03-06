@@ -33,6 +33,7 @@ export interface FirestoreBG {
   created_at: string;
   updated_at: string;
   submitted_at?: string;
+  issued_at?: string;
   expiry_date?: string | null;
   official_bg_number?: string | null;
   accepted_bank_id?: string | null;
@@ -58,6 +59,19 @@ export interface CreateBGPayload {
   required_by_date: string;
 }
 
+export interface ApplicantUser {
+  uid: string;
+  companyName: string;
+  displayName?: string;
+  email: string;
+  pan?: string;
+  gstin?: string;
+  mobile?: string;
+  kycStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  profileComplete?: boolean;
+  createdAt?: any;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function generateBGId(): string {
@@ -79,6 +93,7 @@ function docToFirestoreBG(id: string, data: any): FirestoreBG {
     created_at: toISO(data.created_at),
     updated_at: toISO(data.updated_at),
     submitted_at: data.submitted_at ? toISO(data.submitted_at) : undefined,
+    issued_at: data.issued_at ? toISO(data.issued_at) : undefined,
     offers: data.offers ?? [],
     documents: data.documents ?? [],
     payments: data.payments ?? [],
@@ -149,5 +164,41 @@ export async function updateBGStatus(
     status,
     ...extra,
     updated_at: serverTimestamp(),
+  });
+}
+
+// ── User Profile ──────────────────────────────────────────────────────────────
+
+export async function updateUserProfile(uid: string, data: Record<string, any>): Promise<void> {
+  await updateDoc(doc(db, "users", uid), {
+    ...data,
+  });
+}
+
+// ── Applicant Management (Admin) ──────────────────────────────────────────────
+
+export async function getPendingKYCApplicants(): Promise<ApplicantUser[]> {
+  const q = query(
+    collection(db, "users"),
+    where("role", "==", "applicant"),
+    where("profileComplete", "==", true),
+    where("kycStatus", "==", "PENDING")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() } as ApplicantUser));
+}
+
+export async function getAllApplicants(): Promise<ApplicantUser[]> {
+  const q = query(
+    collection(db, "users"),
+    where("role", "==", "applicant")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() } as ApplicantUser));
+}
+
+export async function updateKYCStatus(uid: string, status: "APPROVED" | "REJECTED"): Promise<void> {
+  await updateDoc(doc(db, "users", uid), {
+    kycStatus: status,
   });
 }
