@@ -24,8 +24,17 @@ export function formatINR(amount: number, compact = false): string {
 
 // ─── Date ─────────────────────────────────────────────────────────────────────
 
-export function formatDate(date: Date | string, format: "short" | "long" | "relative" = "short"): string {
-  const d = typeof date === "string" ? new Date(date) : date;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function formatDate(date: Date | string | any, format: "short" | "long" | "relative" = "short"): string {
+  // Handle Firestore Timestamp objects (.toDate()), plain strings, and JS Dates
+  const d: Date =
+    typeof date === "string"
+      ? new Date(date)
+      : typeof date?.toDate === "function"
+        ? date.toDate()
+        : date instanceof Date
+          ? date
+          : new Date(date?.seconds ? date.seconds * 1000 : date);
   if (format === "relative") {
     const now = new Date();
     const diff = now.getTime() - d.getTime();
