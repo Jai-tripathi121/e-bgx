@@ -32,7 +32,6 @@ export default function IssuancePage() {
     if (step === "applied") return "complete";
     if (step === "offer_accepted" && ["OFFER_ACCEPTED","PROCESSING","PAYMENT_CONFIRMED","ISSUED","IN_PROGRESS"].includes(bg.status)) return "complete";
     if (step === "fees_verified" && ["PAYMENT_CONFIRMED","ISSUED"].includes(bg.status)) return "complete";
-    if (step === "draft" && bg.status === "ISSUED") return "complete";
     if (step === "applied") return "active";
     return "pending";
   };

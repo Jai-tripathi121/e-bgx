@@ -61,7 +61,7 @@ export default function AdminDashboardPage() {
             value={formatINR(totalRevenue, true)}
             subtext="1% fee on all BGs"
             icon={<TrendingUp size={18} />}
-            trend={22.4}
+            trend={{ value: 22.4, label: "vs last month" }}
             variant="navy"
           />
           <KPICard
@@ -69,14 +69,14 @@ export default function AdminDashboardPage() {
             value={mockBGApplications.length.toString()}
             subtext="All time"
             icon={<FileText size={18} />}
-            trend={14}
+            trend={{ value: 14, label: "vs last month" }}
           />
           <KPICard
             label="Active Bank Partners"
             value={mockBanks.length.toString()}
             subtext="Verified & active"
             icon={<Building2 size={18} />}
-            trend={1}
+            trend={{ value: 1, label: "vs last month" }}
           />
           <KPICard
             label="Live Exposure"

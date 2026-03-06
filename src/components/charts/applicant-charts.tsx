@@ -18,7 +18,7 @@ const STATUS_LABELS: Record<string, string> = {
 export function ApplicantPortfolioChart({ applications }: { applications: BGApplication[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  if (!mounted) return <Card><CardHeader><CardTitle>Portfolio Health</CardTitle></CardHeader><CardContent className="h-[180px]" /></Card>;
+  if (!mounted) return <Card><CardHeader><CardTitle>Portfolio Health</CardTitle></CardHeader><CardContent className="h-[180px]">{null}</CardContent></Card>;
   const statusGroups = applications.reduce<Record<string, number>>((acc, bg) => {
     acc[bg.status] = (acc[bg.status] || 0) + 1;
     return acc;
@@ -67,7 +67,7 @@ export function ApplicantPortfolioChart({ applications }: { applications: BGAppl
 export function ApplicantBeneficiaryChart({ applications }: { applications: BGApplication[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  if (!mounted) return <Card><CardHeader><CardTitle>Top Beneficiaries (Exposure)</CardTitle></CardHeader><CardContent className="h-[200px]" /></Card>;
+  if (!mounted) return <Card><CardHeader><CardTitle>Top Beneficiaries (Exposure)</CardTitle></CardHeader><CardContent className="h-[200px]">{null}</CardContent></Card>;
   const data = applications
     .filter((b) => b.status === "ISSUED" || b.status === "IN_PROGRESS" || b.status === "OFFER_ACCEPTED")
     .map((b) => ({

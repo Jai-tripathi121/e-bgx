@@ -86,7 +86,7 @@ export default function BankAnalyticsPage() {
             value={formatINR(a.total_revenue, true)}
             subtext="Commission + Processing Fees"
             icon={<TrendingUp size={18} />}
-            trend={8.2}
+            trend={{ value: 8.2, label: "vs last period" }}
             variant="navy"
           />
           <KPICard
@@ -94,21 +94,21 @@ export default function BankAnalyticsPage() {
             value={a.bgs_issued.toString()}
             subtext="Successfully issued"
             icon={<FileText size={18} />}
-            trend={12}
+            trend={{ value: 12, label: "vs last period" }}
           />
           <KPICard
             label="Active Portfolio"
             value={formatINR(a.active_portfolio, true)}
             subtext="Live guarantee exposure"
             icon={<Briefcase size={18} />}
-            trend={4.5}
+            trend={{ value: 4.5, label: "vs last period" }}
           />
           <KPICard
             label="Acceptance Rate"
             value={`${a.offer_acceptance_rate}%`}
             subtext="Quotes that became BGs"
             icon={<Award size={18} />}
-            trend={2.1}
+            trend={{ value: 2.1, label: "vs last period" }}
             variant="success"
           />
         </div>
