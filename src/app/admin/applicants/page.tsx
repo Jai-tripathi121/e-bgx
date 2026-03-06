@@ -4,14 +4,22 @@ import { PortalHeader } from "@/components/shared/portal-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
 import { BGStatusBadge } from "@/components/ui/badge";
-import { getAllBGs, getPendingKYCApplicants, updateKYCStatus, ApplicantUser, FirestoreBG } from "@/lib/firestore";
+import {
+  getAllBGs, getPendingKYCApplicants, updateKYCStatus,
+  createApplicantUserByAdmin, ApplicantUser, FirestoreBG,
+} from "@/lib/firestore";
 import { formatINR, formatDate } from "@/lib/utils";
-import { Eye, CheckCircle2, XCircle, FileText, AlertTriangle, Inbox } from "lucide-react";
+import { Eye, CheckCircle2, XCircle, FileText, AlertTriangle, Inbox, Plus, X, Copy } from "lucide-react";
 import toast from "react-hot-toast";
 
 type ViewMode = "list" | "kyc" | "detail";
+
+const BLANK_APPLICANT = {
+  email: "", password: "", companyName: "", displayName: "", pan: "", gstin: "", mobile: "",
+};
 
 export default function AdminApplicantsPage() {
   const [view, setView] = useState<ViewMode>("list");
@@ -21,6 +29,10 @@ export default function AdminApplicantsPage() {
   const [loadingKYC, setLoadingKYC] = useState(true);
   const [selectedBG, setSelectedBG] = useState<FirestoreBG | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState(BLANK_APPLICANT);
+  const [creating, setCreating] = useState(false);
+  const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string; company: string } | null>(null);
 
   useEffect(() => {
     getAllBGs()
@@ -47,6 +59,25 @@ export default function AdminApplicantsPage() {
     } finally {
       setLoading(null);
     }
+  };
+
+  const handleCreateApplicant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.email || !form.password || !form.companyName) {
+      toast.error("Email, password and company name are required.");
+      return;
+    }
+    setCreating(true);
+    try {
+      await createApplicantUserByAdmin(form);
+      setCreatedCreds({ email: form.email, password: form.password, company: form.companyName });
+      setForm(BLANK_APPLICANT);
+      toast.success(`${form.companyName} applicant account created.`);
+    } catch (err: any) {
+      const msg = err?.message || "Failed to create applicant account.";
+      toast.error(msg.replace("Firebase: ", "").replace(/\s*\(.*\)\.?$/, ""));
+    }
+    setCreating(false);
   };
 
   if (view === "detail" && selectedBG) {
@@ -152,6 +183,9 @@ export default function AdminApplicantsPage() {
         subtitle="Review KYC, manage BG pipeline, and oversee all applicants"
         actions={
           <div className="flex gap-2">
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
+              Create Applicant
+            </Button>
             <Button size="sm" variant={view === "list" ? "primary" : "outline"} onClick={() => setView("list")}>BG Pipeline</Button>
             <Button size="sm" variant={view === "kyc" ? "primary" : "outline"} onClick={() => setView("kyc")}>
               KYC Queue
@@ -206,22 +240,14 @@ export default function AdminApplicantsPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <Button
-                          size="xs"
-                          variant="success"
-                          icon={<CheckCircle2 size={11} />}
+                        <Button size="xs" variant="success" icon={<CheckCircle2 size={11} />}
                           loading={loading === `approve-${a.uid}`}
-                          onClick={() => handleKYC(a.uid, "approve", a.companyName || a.displayName || "Applicant")}
-                        >
+                          onClick={() => handleKYC(a.uid, "approve", a.companyName || a.displayName || "Applicant")}>
                           Approve
                         </Button>
-                        <Button
-                          size="xs"
-                          variant="danger"
-                          icon={<XCircle size={11} />}
+                        <Button size="xs" variant="danger" icon={<XCircle size={11} />}
                           loading={loading === `reject-${a.uid}`}
-                          onClick={() => handleKYC(a.uid, "reject", a.companyName || a.displayName || "Applicant")}
-                        >
+                          onClick={() => handleKYC(a.uid, "reject", a.companyName || a.displayName || "Applicant")}>
                           Reject
                         </Button>
                       </div>
@@ -234,9 +260,7 @@ export default function AdminApplicantsPage() {
                         { doc: "Address", ok: !!a.companyName },
                       ].map((d) => (
                         <div key={d.doc} className="flex items-center gap-1">
-                          {d.ok
-                            ? <CheckCircle2 size={12} className="text-green-600" />
-                            : <AlertTriangle size={12} className="text-amber-500" />}
+                          {d.ok ? <CheckCircle2 size={12} className="text-green-600" /> : <AlertTriangle size={12} className="text-amber-500" />}
                           <p className="text-xs text-gray-500">{d.doc}</p>
                         </div>
                       ))}
@@ -303,6 +327,76 @@ export default function AdminApplicantsPage() {
           </Card>
         )}
       </div>
+
+      {/* Create Applicant Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => { if (!creating) { setShowCreate(false); setCreatedCreds(null); setForm(BLANK_APPLICANT); } }}>
+          <div className="bg-white dark:bg-navy-900 rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-gray-100 dark:border-navy-800 flex items-center justify-between sticky top-0 bg-white dark:bg-navy-900 rounded-t-2xl z-10">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white">Create Applicant Account</h2>
+                <p className="text-sm text-gray-500">Admin-provisioned applicant access</p>
+              </div>
+              <button onClick={() => { setShowCreate(false); setCreatedCreds(null); setForm(BLANK_APPLICANT); }} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-navy-800 text-gray-500">
+                <X size={16} />
+              </button>
+            </div>
+
+            {createdCreds ? (
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-center gap-2 text-green-600 dark:text-green-400 mb-4">
+                  <CheckCircle2 size={22} />
+                  <span className="font-semibold">Account created & KYC pre-approved</span>
+                </div>
+                <div className="p-4 rounded-xl bg-gray-50 dark:bg-navy-800 border border-gray-200 dark:border-navy-700 space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Credentials to share</p>
+                  {[
+                    ["Company", createdCreds.company],
+                    ["Login Email", createdCreds.email],
+                    ["Temporary Password", createdCreds.password],
+                    ["Login URL", `${typeof window !== "undefined" ? window.location.origin : ""}/login`],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs text-gray-400">{label}</p>
+                        <p className="text-sm font-mono font-medium text-gray-900 dark:text-white">{value}</p>
+                      </div>
+                      <button onClick={() => { navigator.clipboard.writeText(value); toast.success("Copied!"); }} className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-navy-700 text-gray-400">
+                        <Copy size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                  ℹ️ This account is pre-approved (KYC: APPROVED). The applicant can start applying for BGs immediately.
+                </p>
+                <Button className="w-full" onClick={() => { setShowCreate(false); setCreatedCreds(null); }}>Done</Button>
+              </div>
+            ) : (
+              <form onSubmit={handleCreateApplicant} className="p-6 space-y-4">
+                <Input label="Company Name *" value={form.companyName} onChange={(e) => setForm(f => ({ ...f, companyName: e.target.value }))} placeholder="e.g. Postmac Ventures Pvt Ltd" required />
+                <Input label="Contact Person Name" value={form.displayName} onChange={(e) => setForm(f => ({ ...f, displayName: e.target.value }))} placeholder="Full name" />
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="PAN" value={form.pan} onChange={(e) => setForm(f => ({ ...f, pan: e.target.value }))} placeholder="ABCDE1234F" />
+                  <Input label="GSTIN" value={form.gstin} onChange={(e) => setForm(f => ({ ...f, gstin: e.target.value }))} placeholder="22AAAAA0000A1Z5" />
+                </div>
+                <Input label="Mobile" value={form.mobile} onChange={(e) => setForm(f => ({ ...f, mobile: e.target.value }))} placeholder="+91 XXXXXXXXXX" />
+
+                <div className="border-t border-gray-100 dark:border-navy-800 pt-4 space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Login Credentials</p>
+                  <Input label="Login Email *" type="email" value={form.email} onChange={(e) => setForm(f => ({ ...f, email: e.target.value }))} placeholder="company@email.com" required />
+                  <Input label="Temporary Password *" type="text" value={form.password} onChange={(e) => setForm(f => ({ ...f, password: e.target.value }))} placeholder="Min 8 characters" required />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => { setShowCreate(false); setForm(BLANK_APPLICANT); }}>Cancel</Button>
+                  <Button type="submit" className="flex-1" loading={creating} icon={<Plus size={14} />}>Create Account</Button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }

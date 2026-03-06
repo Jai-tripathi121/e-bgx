@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   addDoc,
+  setDoc,
   getDoc,
   getDocs,
   updateDoc,
@@ -10,7 +11,7 @@ import {
   orderBy,
   serverTimestamp,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, firebaseConfig } from "./firebase";
 import { BGStatus } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -201,4 +202,109 @@ export async function updateKYCStatus(uid: string, status: "APPROVED" | "REJECTE
   await updateDoc(doc(db, "users", uid), {
     kycStatus: status,
   });
+}
+
+// ── Bank Management (Admin) ───────────────────────────────────────────────────
+
+export interface BankUser {
+  uid: string;
+  email: string;
+  bankName: string;
+  branchCode: string;
+  branchEmail: string;
+  officerName: string;
+  officerDesignation?: string;
+  officerMobile?: string;
+  address?: string;
+  role: "bank";
+  status: "PENDING" | "ACTIVE" | "SUSPENDED" | "REJECTED";
+  createdAt?: any;
+  memberSince?: string;
+}
+
+export async function getAllBanks(): Promise<BankUser[]> {
+  const q = query(collection(db, "users"), where("role", "==", "bank"));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() } as BankUser));
+}
+
+export async function updateBankStatus(uid: string, status: "ACTIVE" | "REJECTED" | "SUSPENDED"): Promise<void> {
+  await updateDoc(doc(db, "users", uid), { status });
+}
+
+// ── Admin: Create Users (secondary Firebase app — doesn't sign out admin) ─────
+
+async function getSecondaryAuth() {
+  const { initializeApp, getApps } = await import("firebase/app");
+  const { getAuth } = await import("firebase/auth");
+  const SECONDARY = "ebgx-admin-creation";
+  const existing = getApps().find((a) => a.name === SECONDARY);
+  const secondaryApp = existing || initializeApp(firebaseConfig, SECONDARY);
+  return getAuth(secondaryApp);
+}
+
+export async function createBankUser(data: {
+  email: string;
+  password: string;
+  bankName: string;
+  branchCode: string;
+  branchEmail: string;
+  officerName: string;
+  officerDesignation?: string;
+  officerMobile?: string;
+  address?: string;
+}): Promise<string> {
+  const { createUserWithEmailAndPassword, signOut } = await import("firebase/auth");
+  const secondaryAuth = await getSecondaryAuth();
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, data.email, data.password);
+  const uid = cred.user.uid;
+  await signOut(secondaryAuth);
+
+  await setDoc(doc(db, "users", uid), {
+    uid,
+    email: data.email,
+    bankName: data.bankName,
+    branchCode: data.branchCode,
+    branchEmail: data.branchEmail,
+    officerName: data.officerName,
+    officerDesignation: data.officerDesignation || "",
+    officerMobile: data.officerMobile || "",
+    address: data.address || "",
+    role: "bank",
+    status: "ACTIVE",
+    createdAt: serverTimestamp(),
+    memberSince: new Date().toISOString().split("T")[0],
+  });
+  return uid;
+}
+
+export async function createApplicantUserByAdmin(data: {
+  email: string;
+  password: string;
+  companyName: string;
+  displayName?: string;
+  pan?: string;
+  gstin?: string;
+  mobile?: string;
+}): Promise<string> {
+  const { createUserWithEmailAndPassword, signOut } = await import("firebase/auth");
+  const secondaryAuth = await getSecondaryAuth();
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, data.email, data.password);
+  const uid = cred.user.uid;
+  await signOut(secondaryAuth);
+
+  await setDoc(doc(db, "users", uid), {
+    uid,
+    email: data.email,
+    companyName: data.companyName,
+    displayName: data.displayName || data.companyName,
+    pan: data.pan || "",
+    gstin: data.gstin || "",
+    mobile: data.mobile || "",
+    role: "applicant",
+    profileComplete: true,
+    kycStatus: "APPROVED",
+    createdAt: serverTimestamp(),
+  });
+  return uid;
 }
