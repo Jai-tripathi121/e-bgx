@@ -234,13 +234,11 @@ export async function updateBankStatus(uid: string, status: "ACTIVE" | "REJECTED
 
 // ── Admin: Create Users (secondary Firebase app — doesn't sign out admin) ─────
 
-async function getSecondaryAuth() {
+async function getSecondaryApp() {
   const { initializeApp, getApps } = await import("firebase/app");
-  const { getAuth } = await import("firebase/auth");
   const SECONDARY = "ebgx-admin-creation";
   const existing = getApps().find((a) => a.name === SECONDARY);
-  const secondaryApp = existing || initializeApp(firebaseConfig, SECONDARY);
-  return getAuth(secondaryApp);
+  return existing || initializeApp(firebaseConfig, SECONDARY);
 }
 
 export async function createBankUser(data: {
@@ -254,13 +252,18 @@ export async function createBankUser(data: {
   officerMobile?: string;
   address?: string;
 }): Promise<string> {
-  const { createUserWithEmailAndPassword, signOut } = await import("firebase/auth");
-  const secondaryAuth = await getSecondaryAuth();
+  const { getAuth, createUserWithEmailAndPassword, signOut } = await import("firebase/auth");
+  const { getFirestore, doc: fsDoc, setDoc: fsSetDoc, serverTimestamp: fsSTS } = await import("firebase/firestore");
+
+  const secondaryApp = await getSecondaryApp();
+  const secondaryAuth = getAuth(secondaryApp);
+  const secondaryDb = getFirestore(secondaryApp);
+
   const cred = await createUserWithEmailAndPassword(secondaryAuth, data.email, data.password);
   const uid = cred.user.uid;
-  await signOut(secondaryAuth);
 
-  await setDoc(doc(db, "users", uid), {
+  // Write while the new user is still signed in → request.auth.uid == uid → satisfies isOwner rule
+  await fsSetDoc(fsDoc(secondaryDb, "users", uid), {
     uid,
     email: data.email,
     bankName: data.bankName,
@@ -272,9 +275,11 @@ export async function createBankUser(data: {
     address: data.address || "",
     role: "bank",
     status: "ACTIVE",
-    createdAt: serverTimestamp(),
+    createdAt: fsSTS(),
     memberSince: new Date().toISOString().split("T")[0],
   });
+
+  await signOut(secondaryAuth);
   return uid;
 }
 
@@ -287,13 +292,18 @@ export async function createApplicantUserByAdmin(data: {
   gstin?: string;
   mobile?: string;
 }): Promise<string> {
-  const { createUserWithEmailAndPassword, signOut } = await import("firebase/auth");
-  const secondaryAuth = await getSecondaryAuth();
+  const { getAuth, createUserWithEmailAndPassword, signOut } = await import("firebase/auth");
+  const { getFirestore, doc: fsDoc, setDoc: fsSetDoc, serverTimestamp: fsSTS } = await import("firebase/firestore");
+
+  const secondaryApp = await getSecondaryApp();
+  const secondaryAuth = getAuth(secondaryApp);
+  const secondaryDb = getFirestore(secondaryApp);
+
   const cred = await createUserWithEmailAndPassword(secondaryAuth, data.email, data.password);
   const uid = cred.user.uid;
-  await signOut(secondaryAuth);
 
-  await setDoc(doc(db, "users", uid), {
+  // Write while the new user is still signed in → request.auth.uid == uid → satisfies isOwner rule
+  await fsSetDoc(fsDoc(secondaryDb, "users", uid), {
     uid,
     email: data.email,
     companyName: data.companyName,
@@ -304,7 +314,9 @@ export async function createApplicantUserByAdmin(data: {
     role: "applicant",
     profileComplete: true,
     kycStatus: "APPROVED",
-    createdAt: serverTimestamp(),
+    createdAt: fsSTS(),
   });
+
+  await signOut(secondaryAuth);
   return uid;
 }
