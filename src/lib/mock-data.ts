@@ -1,0 +1,203 @@
+import { BGApplication, BankOffer, BankPartner, PaymentTransaction, AuditEvent, BankAnalytics } from "@/types";
+
+// ─── Mock BG Applications ─────────────────────────────────────────────────────
+
+export const mockBGApplications: BGApplication[] = [
+  {
+    bg_id: "BG-7918",
+    applicant_id: "app-001",
+    applicant_name: "POSTMAC VENTURES PVT LTD",
+    beneficiary_name: "NHAI",
+    beneficiary_address: "NHAI Bhawan, Plot No. 3, Sector 44, Gurugram, Haryana 122003",
+    bg_type: "PERFORMANCE",
+    amount_inr: 38000000,
+    validity_months: 24,
+    required_by_date: new Date("2026-04-15"),
+    tender_number: "NH-45/2025",
+    status: "ISSUED",
+    created_at: new Date("2026-01-15"),
+    issued_at: new Date("2026-01-22"),
+    expiry_date: new Date("2028-01-22"),
+    official_bg_number: "w3456789",
+    accepted_bank_id: "bank-001",
+    accepted_bank_name: "Canara Bank",
+    platform_fee_paid: true,
+    documents: [
+      { doc_id: "doc-001", type: "FINAL_BG", label: "Final BG Document", url: "#", uploaded_at: new Date("2026-01-22"), status: "COMPLETED" },
+      { doc_id: "doc-002", type: "DRAFT_BG", label: "Draft BG Document", url: "#", uploaded_at: new Date("2026-01-20"), status: "COMPLETED" },
+      { doc_id: "doc-003", type: "TENDER", label: "Tender Document", url: "#", uploaded_at: new Date("2026-01-15"), status: "COMPLETED" },
+    ],
+    offers: [
+      { offer_id: "off-001", bg_id: "BG-7918", bank_id: "bank-001", bank_name: "Canara Bank", commission_rate: 1.5, fd_margin: 100, fd_interest: 0, total_cost_inr: 1520000, valid_till: new Date("2026-02-15"), status: "ACCEPTED", submitted_at: new Date("2026-01-17") },
+      { offer_id: "off-002", bg_id: "BG-7918", bank_id: "bank-002", bank_name: "HDFC Bank", commission_rate: 1.75, fd_margin: 105, fd_interest: 0, total_cost_inr: 1710000, valid_till: new Date("2026-02-15"), status: "REJECTED", submitted_at: new Date("2026-01-17") },
+    ],
+    payments: [
+      { txn_id: "TXN-001", bg_id: "BG-7918", type: "PLATFORM_FEE", amount_inr: 380000, status: "SUCCESS", txn_date: new Date("2026-01-16"), description: "Platform Fee (1%)", beneficiary: "e-BGX" },
+      { txn_id: "TXN-002", bg_id: "BG-7918", type: "FD_DEPOSIT", amount_inr: 38000000, status: "VERIFIED", txn_date: new Date("2026-01-18"), description: "Fixed Deposit", beneficiary: "Canara Bank" },
+      { txn_id: "TXN-003", bg_id: "BG-7918", type: "BANK_BG_FEE", amount_inr: 50000, status: "VERIFIED", txn_date: new Date("2026-01-19"), description: "BG Processing Fee", beneficiary: "Canara Bank" },
+    ],
+    audit_trail: [
+      { event_id: "ev-001", bg_id: "BG-7918", event_type: "APPLICATION_SUBMITTED", description: "BG Application submitted", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-01-15T10:00:00") },
+      { event_id: "ev-002", bg_id: "BG-7918", event_type: "PLATFORM_FEE_PAID", description: "Platform Fee (1%) paid - ₹3,80,000", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-01-16T14:30:00") },
+      { event_id: "ev-003", bg_id: "BG-7918", event_type: "OFFER_RECEIVED", description: "Commercial offer received from Canara Bank", actor: "System", actor_role: "PLATFORM_ADMIN", timestamp: new Date("2026-01-17T09:00:00") },
+      { event_id: "ev-004", bg_id: "BG-7918", event_type: "OFFER_ACCEPTED", description: "Offer from Canara Bank accepted", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-01-17T16:00:00") },
+      { event_id: "ev-005", bg_id: "BG-7918", event_type: "FD_VERIFIED", description: "Fixed Deposit creation verified by Canara Bank", actor: "Jai – Canara Bank", actor_role: "BANK_OFFICER", timestamp: new Date("2026-01-19T11:00:00") },
+      { event_id: "ev-006", bg_id: "BG-7918", event_type: "DRAFT_GENERATED", description: "Draft BG generated and uploaded", actor: "Jai – Canara Bank", actor_role: "BANK_OFFICER", timestamp: new Date("2026-01-20T14:00:00") },
+      { event_id: "ev-007", bg_id: "BG-7918", event_type: "DRAFT_APPROVED", description: "Draft BG reviewed and approved", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-01-21T10:00:00") },
+      { event_id: "ev-008", bg_id: "BG-7918", event_type: "BG_ISSUED", description: "Final BG issued – BG No. w3456789", actor: "Jai – Canara Bank", actor_role: "BANK_OFFICER", timestamp: new Date("2026-01-22T09:00:00") },
+    ],
+  },
+  {
+    bg_id: "BG-6935",
+    applicant_id: "app-001",
+    applicant_name: "POSTMAC VENTURES PVT LTD",
+    beneficiary_name: "Ministry of Railways",
+    beneficiary_address: "Rail Bhawan, Raisina Road, New Delhi 110001",
+    bg_type: "FINANCIAL",
+    amount_inr: 15000000,
+    validity_months: 12,
+    required_by_date: new Date("2026-03-20"),
+    tender_number: "RLY-2025/089",
+    status: "IN_PROGRESS",
+    created_at: new Date("2026-02-10"),
+    platform_fee_paid: true,
+    accepted_bank_id: "bank-001",
+    accepted_bank_name: "Canara Bank",
+    documents: [
+      { doc_id: "doc-004", type: "TENDER", label: "Tender Document", url: "#", uploaded_at: new Date("2026-02-10"), status: "COMPLETED" },
+    ],
+    offers: [
+      { offer_id: "off-003", bg_id: "BG-6935", bank_id: "bank-001", bank_name: "Canara Bank", commission_rate: 1.5, fd_margin: 100, fd_interest: 0, total_cost_inr: 375000, valid_till: new Date("2026-03-10"), status: "ACCEPTED", submitted_at: new Date("2026-02-12") },
+    ],
+    payments: [
+      { txn_id: "TXN-004", bg_id: "BG-6935", type: "PLATFORM_FEE", amount_inr: 150000, status: "SUCCESS", txn_date: new Date("2026-02-11"), description: "Platform Fee (1%)", beneficiary: "e-BGX" },
+    ],
+    audit_trail: [
+      { event_id: "ev-009", bg_id: "BG-6935", event_type: "APPLICATION_SUBMITTED", description: "BG Application submitted", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-02-10T09:00:00") },
+      { event_id: "ev-010", bg_id: "BG-6935", event_type: "OFFER_ACCEPTED", description: "Offer from Canara Bank accepted", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-02-13T15:00:00") },
+    ],
+  },
+  {
+    bg_id: "BG-5512",
+    applicant_id: "app-001",
+    applicant_name: "POSTMAC VENTURES PVT LTD",
+    beneficiary_name: "NTPC Limited",
+    beneficiary_address: "NTPC Bhawan, Scope Complex, New Delhi 110003",
+    bg_type: "STATUTORY",
+    amount_inr: 5000000,
+    validity_months: 6,
+    required_by_date: new Date("2026-04-01"),
+    tender_number: "NTPC/2026/012",
+    status: "PAY_FEES",
+    created_at: new Date("2026-02-25"),
+    platform_fee_paid: false,
+    documents: [],
+    offers: [],
+    payments: [],
+    audit_trail: [
+      { event_id: "ev-011", bg_id: "BG-5512", event_type: "APPLICATION_SUBMITTED", description: "BG Application submitted", actor: "Jai Tripathi", actor_role: "APPLICANT", timestamp: new Date("2026-02-25T11:00:00") },
+    ],
+  },
+];
+
+// ─── Mock Bank Partners ───────────────────────────────────────────────────────
+
+export const mockBanks: BankPartner[] = [
+  {
+    bank_id: "bank-001",
+    bank_name: "Canara Bank",
+    branch_code: "CNRB0001234",
+    address: "Canara Bank Bhawan, 112 J.C. Road, Bengaluru 560002",
+    branch_email: "bgdesk.bgr@canarabank.com",
+    officer_email: "jai@canarabank.com",
+    officer_name: "Jai",
+    officer_designation: "Senior Manager",
+    officer_mobile: "+91 98765 43210",
+    status: "ACTIVE",
+    member_since: new Date("2025-06-01"),
+  },
+  {
+    bank_id: "bank-002",
+    bank_name: "HDFC Bank",
+    branch_code: "HDFC0002345",
+    address: "HDFC Bank House, Senapati Bapat Marg, Mumbai 400013",
+    branch_email: "bgdesk.mumbai@hdfcbank.com",
+    officer_email: "rao@hdfcbank.com",
+    officer_name: "S. Rao",
+    officer_designation: "Manager – Trade Finance",
+    officer_mobile: "+91 87654 32109",
+    status: "ACTIVE",
+    member_since: new Date("2025-08-15"),
+  },
+];
+
+// ─── Mock Analytics ───────────────────────────────────────────────────────────
+
+export const mockBankAnalytics: BankAnalytics = {
+  period: "6M",
+  total_revenue: 4800000,
+  bgs_issued: 12,
+  active_portfolio: 920000000,
+  avg_tat: 3.4,
+  offer_acceptance_rate: 72,
+  avg_bg_size: 76666667,
+  repeat_customers: 56,
+  customer_satisfaction: 4.8,
+  monthly_trend: [
+    { month: "Sep", count: 1, revenue: 380000 },
+    { month: "Oct", count: 2, revenue: 620000 },
+    { month: "Nov", count: 1, revenue: 290000 },
+    { month: "Dec", count: 3, revenue: 1100000 },
+    { month: "Jan", count: 3, revenue: 1250000 },
+    { month: "Feb", count: 2, revenue: 1160000 },
+  ],
+  sector_distribution: [
+    { sector: "Infrastructure", amount: 450000000 },
+    { sector: "Government", amount: 280000000 },
+    { sector: "Manufacturing", amount: 120000000 },
+    { sector: "Real Estate", amount: 70000000 },
+  ],
+};
+
+// ─── Market Feed (Bank view) ──────────────────────────────────────────────────
+
+export const mockMarketFeed: BGApplication[] = [
+  {
+    bg_id: "BG-8034",
+    applicant_id: "app-002",
+    applicant_name: "INFRA BUILD CORP PVT LTD",
+    beneficiary_name: "NHAI",
+    beneficiary_address: "New Delhi",
+    bg_type: "PERFORMANCE",
+    amount_inr: 55000000,
+    validity_months: 36,
+    required_by_date: new Date("2026-04-01"),
+    tender_number: "NH-101/2026",
+    status: "DRAFT",
+    created_at: new Date("2026-03-05"),
+    platform_fee_paid: true,
+    documents: [],
+    offers: [],
+    payments: [],
+    audit_trail: [],
+  },
+  {
+    bg_id: "BG-8041",
+    applicant_id: "app-003",
+    applicant_name: "METRO CONTRACTORS LTD",
+    beneficiary_name: "Delhi Metro Rail Corporation",
+    beneficiary_address: "New Delhi",
+    bg_type: "FINANCIAL",
+    amount_inr: 25000000,
+    validity_months: 18,
+    required_by_date: new Date("2026-03-25"),
+    tender_number: "DMRC/CC-1234",
+    status: "DRAFT",
+    created_at: new Date("2026-03-04"),
+    platform_fee_paid: true,
+    documents: [],
+    offers: [],
+    payments: [],
+    audit_trail: [],
+  },
+];

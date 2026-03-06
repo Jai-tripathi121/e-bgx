@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ───────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return request.auth.token.role == 'admin';
+    }
+
+    function isBank() {
+      return request.auth.token.role == 'bank';
+    }
+
+    function isApplicant() {
+      return request.auth.token.role == 'applicant';
+    }
+
+    // ─── Users ──────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ─── BG Applications ────────────────────────────────────────────────────
+    match /bg_applications/{applicationId} {
+      // Applicant can read their own applications
+      allow read: if isSignedIn() && (
+        resource.data.applicant_id == request.auth.uid ||
+        isBank() ||
+        isAdmin()
+      );
+      // Applicant can create applications
+      allow create: if isSignedIn() && isApplicant() &&
+        request.resource.data.applicant_id == request.auth.uid;
+      // Applicant can update their own DRAFT applications; bank/admin can update any
+      allow update: if isSignedIn() && (
+        (isApplicant() && resource.data.applicant_id == request.auth.uid &&
+          resource.data.status == 'DRAFT') ||
+        isBank() ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── BG Offers ──────────────────────────────────────────────────────────
+    match /bg_offers/{offerId} {
+      allow read: if isSignedIn() && (
+        resource.data.applicant_id == request.auth.uid ||
+        resource.data.bank_id == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && isBank();
+      allow update: if isSignedIn() && (
+        resource.data.bank_id == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── Issued BGs ─────────────────────────────────────────────────────────
+    match /issued_bgs/{bgId} {
+      allow read: if isSignedIn() && (
+        resource.data.applicant_id == request.auth.uid ||
+        resource.data.bank_id == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && (isBank() || isAdmin());
+      allow update: if isSignedIn() && (isBank() || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ─── Bank Partners ──────────────────────────────────────────────────────
+    match /bank_partners/{bankId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      allow update: if isSignedIn() && (
+        resource.data.bank_id == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── Notifications ──────────────────────────────────────────────────────
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() &&
+        resource.data.user_id == request.auth.uid;
+      allow create: if isAdmin() || isBank();
+      allow update: if isSignedIn() &&
+        resource.data.user_id == request.auth.uid;
+      allow delete: if isSignedIn() &&
+        resource.data.user_id == request.auth.uid;
+    }
+
+    // ─── Platform Config (admin-only write) ─────────────────────────────────
+    match /platform_config/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

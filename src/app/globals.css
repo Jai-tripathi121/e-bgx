@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 98%;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-white dark:bg-navy-950 text-gray-900 dark:text-white;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-200 dark:bg-navy-700 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-300 dark:bg-navy-600;
+  }
+}
+
+@layer components {
+  .portal-layout {
+    @apply flex h-screen overflow-hidden;
+  }
+
+  .portal-main {
+    @apply flex-1 flex flex-col overflow-hidden;
+  }
+
+  .portal-content {
+    @apply flex-1 overflow-y-auto bg-gray-50 dark:bg-navy-950 p-6;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4;
+  }
+
+  .workflow-step {
+    @apply flex items-start gap-4 relative;
+  }
+
+  .workflow-step:not(:last-child)::before {
+    content: '';
+    @apply absolute left-3.5 top-8 bottom-0 w-px bg-gray-200 dark:bg-navy-700;
+  }
+
+  .workflow-step-dot {
+    @apply w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 relative z-10;
+  }
+
+  .workflow-step-dot.complete {
+    @apply bg-green-500 border-green-500 text-white;
+  }
+
+  .workflow-step-dot.active {
+    @apply bg-navy-800 border-navy-800 text-white;
+  }
+
+  .workflow-step-dot.pending {
+    @apply bg-white dark:bg-navy-900 border-gray-200 dark:border-navy-700;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
