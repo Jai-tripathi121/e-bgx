@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Building2, User, Mail, Lock, Phone, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 type Portal = "applicant" | "bank";
 
@@ -16,6 +17,8 @@ function RegisterForm() {
   const [portal, setPortal] = useState<Portal>((searchParams.get("portal") as Portal) || "applicant");
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const { register } = useAuth();
 
   const [form, setForm] = useState({
     companyName: "",
@@ -35,8 +38,15 @@ function RegisterForm() {
     e.preventDefault();
     if (step < 2) { setStep(2); return; }
     setLoading(true);
-    await new Promise((res) => setTimeout(res, 1000));
-    router.push(portal === "applicant" ? "/applicant/dashboard" : "/bank/dashboard");
+    setError("");
+    try {
+      await register(form, portal);
+      router.push(portal === "applicant" ? "/applicant/dashboard" : "/bank/dashboard");
+    } catch (err: any) {
+      const msg = err?.message || "Registration failed.";
+      setError(msg.replace("Firebase: ", "").replace(/\s*\(.*\)\.?$/, ""));
+      setLoading(false);
+    }
   };
 
   const benefits = {
@@ -119,6 +129,12 @@ function RegisterForm() {
               </div>
             </div>
           </>
+        )}
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 text-sm text-red-700 dark:text-red-400">
+            {error}
+          </div>
         )}
 
         <form onSubmit={handleNext} className="space-y-4">

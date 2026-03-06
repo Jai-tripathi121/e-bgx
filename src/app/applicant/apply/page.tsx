@@ -8,6 +8,8 @@ import { Input, Textarea, Select } from "@/components/ui/input";
 import { CheckCircle2, Upload, FileText, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
+import { createBGApplication } from "@/lib/firestore";
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -30,6 +32,7 @@ interface UploadedDoc {
 
 export default function ApplyBGPage() {
   const router = useRouter();
+  const { user, profile } = useAuth();
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
   const [declaration, setDeclaration] = useState(false);
@@ -37,14 +40,14 @@ export default function ApplyBGPage() {
 
   const [form, setForm] = useState({
     // Step 1 (pre-filled from profile)
-    companyName: "POSTMAC VENTURES PVT LTD",
-    pan: "AABCP1234C",
-    gstin: "27AABCP1234C1Z5",
-    cin: "U12345MH2020PTC123456",
-    address: "Plot 45, Industrial Area Phase II, Chandigarh",
-    city: "Chandigarh",
-    state: "Punjab",
-    pincode: "160002",
+    companyName: profile?.companyName || "",
+    pan: profile?.pan || "",
+    gstin: profile?.gstin || "",
+    cin: "",
+    address: "",
+    city: "",
+    state: "",
+    pincode: "",
     // Step 2
     beneficiaryName: "",
     tenderNumber: "",
@@ -65,10 +68,28 @@ export default function ApplyBGPage() {
   };
 
   const handleSubmit = async () => {
+    if (!user) return;
     setLoading(true);
-    await new Promise((res) => setTimeout(res, 1500));
-    toast.success("BG Application submitted successfully! We will broadcast it to partner banks.");
-    router.push("/applicant/offers");
+    try {
+      await createBGApplication({
+        applicant_id: user.uid,
+        applicant_name: form.companyName || profile?.companyName || user.email || "Unknown",
+        applicant_pan: form.pan,
+        applicant_gstin: form.gstin,
+        bg_type: form.bgType,
+        amount_inr: Number(form.amount),
+        beneficiary_name: form.beneficiaryName,
+        beneficiary_address: form.beneficiaryAddress,
+        tender_number: form.tenderNumber,
+        validity_months: Number(form.validity),
+        required_by_date: form.requiredBy,
+      });
+      toast.success("BG Application submitted! Broadcasting to partner banks now.");
+      router.push("/applicant/dashboard");
+    } catch (err: any) {
+      toast.error(err?.message || "Submission failed. Please try again.");
+      setLoading(false);
+    }
   };
 
   const canProceed = step === 2 ?
@@ -121,9 +142,9 @@ export default function ApplyBGPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2">
-                    <Input label="Company Name" value={form.companyName} readOnly />
+                    <Input label="Company Name" value={form.companyName} onChange={(e) => update("companyName", e.target.value)} required />
                   </div>
-                  <Input label="Company PAN" value={form.pan} readOnly />
+                  <Input label="Company PAN" value={form.pan} onChange={(e) => update("pan", e.target.value)} required />
                   <Input label="GST Number" value={form.gstin} onChange={(e) => update("gstin", e.target.value)} />
                   <Input label="CIN Number" value={form.cin} onChange={(e) => update("cin", e.target.value)} />
                   <Input label="City" value={form.city} onChange={(e) => update("city", e.target.value)} required />

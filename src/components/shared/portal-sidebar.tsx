@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Logo } from "./logo";
+import { useAuth } from "@/lib/auth-context";
 import {
   LayoutDashboard, FileText, Inbox, CheckSquare, CreditCard, Award,
   Navigation, RefreshCw, User, BarChart3, Settings, Building2,
@@ -60,7 +61,14 @@ const portalLabels = {
 
 export function PortalSidebar({ portal, userName = "User", entityName = "" }: PortalSidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { logout } = useAuth();
   const navItems = navMap[portal];
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/login?portal=" + portal);
+  };
 
   return (
     <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-navy-900 dark:bg-navy-950 border-r border-navy-800 z-30">
@@ -124,9 +132,9 @@ export function PortalSidebar({ portal, userName = "User", entityName = "" }: Po
               <p className="text-xs font-semibold text-white truncate">{userName}</p>
               <p className="text-[10px] text-navy-400 truncate">{entityName}</p>
             </div>
-            <Link href="/login" className="text-navy-400 hover:text-white transition-colors">
+            <button onClick={handleLogout} className="text-navy-400 hover:text-white transition-colors" title="Sign out">
               <LogOut size={14} />
-            </Link>
+            </button>
           </div>
         </div>
       </div>

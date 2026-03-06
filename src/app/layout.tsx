@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "react-hot-toast";
+import { AuthProvider } from "@/lib/auth-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="antialiased">
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+          <AuthProvider>
           {children}
           <Toaster
             position="top-right"
@@ -36,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               duration: 4000,
             }}
           />
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

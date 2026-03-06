@@ -1,9 +1,36 @@
+"use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { PortalSidebar } from "@/components/shared/portal-sidebar";
+import { useAuth } from "@/lib/auth-context";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  const { user, profile, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !user) router.replace("/login?portal=applicant");
+    if (!loading && user && profile?.role === "applicant") router.replace("/applicant/dashboard");
+    if (!loading && user && profile?.role === "bank") router.replace("/bank/dashboard");
+  }, [user, profile, loading, router]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-navy-950">
+        <div className="w-8 h-8 border-2 border-navy-800 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
   return (
     <div className="portal-layout">
-      <PortalSidebar portal="admin" userName="Jai Tripathi" entityName="e-BGX Admin" />
+      <PortalSidebar
+        portal="admin"
+        userName={profile?.displayName || user.email || "Admin"}
+        entityName="e-BGX Admin"
+      />
       <main className="portal-main">{children}</main>
     </div>
   );

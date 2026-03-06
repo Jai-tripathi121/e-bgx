@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Building2, User, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 type Portal = "applicant" | "bank" | "admin";
 
@@ -19,6 +20,7 @@ function LoginForm() {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { login, loginWithGoogle } = useAuth();
 
   const portalConfig = {
     applicant: {
@@ -45,16 +47,27 @@ function LoginForm() {
     e.preventDefault();
     setLoading(true);
     setError("");
-    // Simulate auth – replace with Firebase signInWithEmailAndPassword
-    await new Promise((res) => setTimeout(res, 800));
-    router.push(portalConfig[portal].redirect);
+    try {
+      await login(email, password);
+      router.push(portalConfig[portal].redirect);
+    } catch (err: any) {
+      const msg = err?.message || "Login failed.";
+      setError(msg.replace("Firebase: ", "").replace(/\s*\(.*\)\.?$/, ""));
+      setLoading(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
     setLoading(true);
-    // Replace with Firebase Google sign-in
-    await new Promise((res) => setTimeout(res, 600));
-    router.push(portalConfig[portal].redirect);
+    setError("");
+    try {
+      await loginWithGoogle(portal);
+      router.push(portalConfig[portal].redirect);
+    } catch (err: any) {
+      const msg = err?.message || "Google sign-in failed.";
+      setError(msg.replace("Firebase: ", "").replace(/\s*\(.*\)\.?$/, ""));
+      setLoading(false);
+    }
   };
 
   return (
