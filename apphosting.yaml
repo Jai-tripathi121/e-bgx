@@ -6,15 +6,60 @@ runConfig:
   concurrency: 80
 
 env:
-  - variable: NEXT_PUBLIC_APP_URL
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: AIzaSyDDAjt2ljkc97WR3p6I1rfoA_Db-GdDsCA
     availability:
       - BUILD
       - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: e-bgxcom.firebaseapp.com
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: e-bgxcom
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: e-bgxcom.firebasestorage.app
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "943614464296"
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: 1:943614464296:web:b97470724481794470401d
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: G-ZDHZYPCM8M
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_APP_URL
+    value: https://e-bgxcom.web.app
+    availability:
+      - BUILD
+      - RUNTIME
+
   - variable: NEXT_PUBLIC_PLATFORM_NAME
     value: e-BGX
     availability:
       - BUILD
       - RUNTIME
+
   - variable: NEXT_PUBLIC_PLATFORM_FEE_PERCENT
     value: "1"
     availability:
