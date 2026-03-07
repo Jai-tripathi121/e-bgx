@@ -135,7 +135,7 @@ export default function ApplicantDashboard() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1.5">
-                          <Link href={`/applicant/issuance/${bg.bg_id}`}>
+                          <Link href={`/applicant/issuance?bg=${bg.bg_id}`}>
                             <Button size="xs" variant="outline" icon={<Eye size={12} />}>View</Button>
                           </Link>
                           <Link href={`/applicant/track?id=${bg.bg_id}`}>

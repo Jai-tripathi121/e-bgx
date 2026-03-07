@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { BGStatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,7 @@ function getStepStatus(bg: FirestoreBG, key: string) {
 
 export default function ApplicantIssuancePage() {
   const { user, profile } = useAuth();
+  const searchParams = useSearchParams();
   const [applications, setApplications] = useState<FirestoreBG[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [selectedBG, setSelectedBG]   = useState<FirestoreBG | null>(null);
@@ -96,10 +98,21 @@ export default function ApplicantIssuancePage() {
   useEffect(() => {
     if (!user) return;
     getApplicantBGs(user.uid)
-      .then(setApplications)
+      .then((bgs) => {
+        setApplications(bgs);
+        // Auto-select BG if ?bg=<bg_id> query param is present (deep link from dashboard)
+        const bgParam = searchParams.get("bg");
+        if (bgParam) {
+          const match = bgs.find((b) => b.bg_id === bgParam || b.id === bgParam);
+          if (match) {
+            setSelectedBG(match);
+            setActiveTab("Overview");
+          }
+        }
+      })
       .catch(() => setApplications([]))
       .finally(() => setLoadingData(false));
-  }, [user]);
+  }, [user, searchParams]);
 
   const loadTabData = useCallback(async (tab: Tab, bg: FirestoreBG) => {
     if (tab === "Messages") {
