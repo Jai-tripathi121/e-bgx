@@ -50,8 +50,10 @@ service cloud.firestore {
         isAdmin()
       );
       allow update: if isSignedIn() && (
+        // Applicant can update their own BG in DRAFT or PROCESSING state
+        // (PROCESSING → OFFER_ACCEPTED happens when they accept a bank offer)
         (isApplicant() && resource.data.applicant_id == request.auth.uid &&
-          resource.data.status == 'DRAFT') ||
+          (resource.data.status == 'DRAFT' || resource.data.status == 'PROCESSING')) ||
         isBank() ||
         isAdmin()
       );
@@ -67,7 +69,10 @@ service cloud.firestore {
       );
       allow create: if isSignedIn() && (isBank() || isAdmin());
       allow update: if isSignedIn() && (
-        resource.data.bank_id == request.auth.uid || isAdmin()
+        // Bank edits their own quote; applicant accepts/rejects offers on their BGs
+        resource.data.bank_id == request.auth.uid ||
+        resource.data.applicant_id == request.auth.uid ||
+        isAdmin()
       );
       allow delete: if isAdmin();
     }

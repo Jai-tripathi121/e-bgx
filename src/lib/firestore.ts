@@ -10,6 +10,8 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  arrayUnion,
+  writeBatch,
 } from "firebase/firestore";
 import { db, firebaseConfig } from "./firebase";
 import { BGStatus } from "@/types";
@@ -324,9 +326,10 @@ export async function createApplicantUserByAdmin(data: {
 // ── Bank: Market Feed, Offers, Profile ────────────────────────────────────────
 
 export interface BankOffer {
-  id: string;
+  id: string;          // Firestore doc ID
   offer_id: string;
-  bg_id: string;
+  bg_id: string;       // BG reference number e.g. BG-1001
+  bg_doc_id: string;   // Firestore doc ID of the bg_application
   bank_id: string;
   bank_name: string;
   applicant_id: string;
@@ -363,32 +366,115 @@ export async function getMarketFeed(): Promise<FirestoreBG[]> {
   return snap.docs.map((d) => docToFirestoreBG(d.id, d.data()));
 }
 
+// ── Shared doc → BankOffer mapper ────────────────────────────────────────────
+
+function docToBankOffer(d: any): BankOffer {
+  const data = d.data ? d.data() : d;
+  return {
+    id: d.id,
+    offer_id: data.offer_id || d.id,
+    bg_id: data.bg_id || "",
+    bg_doc_id: data.bg_doc_id || "",
+    bank_id: data.bank_id || "",
+    bank_name: data.bank_name || "",
+    applicant_id: data.applicant_id || "",
+    applicant_name: data.applicant_name || "",
+    bg_amount: data.bg_amount ?? 0,
+    bg_type: data.bg_type || "",
+    validity_months: data.validity_months || 0,
+    commission_rate: data.commission_rate ?? 0,
+    fd_margin: data.fd_margin ?? 0,
+    offer_valid_days: data.offer_valid_days || 30,
+    conditions: data.conditions || "",
+    submitted_at: toISO(data.submitted_at),
+    valid_till: data.valid_till || toISO(null),
+    status: data.status || "PENDING",
+  } as BankOffer;
+}
+
 /** Returns all offers submitted by a specific bank */
 export async function getBankOffers(bankId: string): Promise<BankOffer[]> {
   const q = query(collection(db, "bg_offers"), where("bank_id", "==", bankId));
   const snap = await getDocs(q);
-  return snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      id: d.id,
-      offer_id: data.offer_id || d.id,
-      bg_id: data.bg_id,
-      bank_id: data.bank_id,
-      bank_name: data.bank_name,
-      applicant_id: data.applicant_id,
-      applicant_name: data.applicant_name,
-      bg_amount: data.bg_amount ?? 0,
-      bg_type: data.bg_type || "",
-      validity_months: data.validity_months || 0,
-      commission_rate: data.commission_rate ?? 0,
-      fd_margin: data.fd_margin ?? 0,
-      offer_valid_days: data.offer_valid_days || 30,
-      conditions: data.conditions || "",
-      submitted_at: toISO(data.submitted_at),
-      valid_till: data.valid_till || toISO(null),
-      status: data.status || "PENDING",
-    } as BankOffer;
+  return snap.docs.map(docToBankOffer);
+}
+
+/** Returns all offers across all BGs for a given applicant (single query) */
+export async function getOffersForApplicant(applicantId: string): Promise<BankOffer[]> {
+  const q = query(collection(db, "bg_offers"), where("applicant_id", "==", applicantId));
+  const snap = await getDocs(q);
+  return snap.docs.map(docToBankOffer);
+}
+
+/** Returns all offers for a list of BG doc IDs (used for offer-count badges in market feed) */
+export async function getOffersForBGs(bgDocIds: string[]): Promise<BankOffer[]> {
+  if (bgDocIds.length === 0) return [];
+  const q = query(
+    collection(db, "bg_offers"),
+    where("bg_doc_id", "in", bgDocIds.slice(0, 30))
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(docToBankOffer);
+}
+
+/** Updates commission/margin/validity on an existing offer (bank editing their quote) */
+export async function updateBankOffer(
+  offerId: string,
+  data: { commission_rate: number; fd_margin: number; offer_valid_days: number; conditions: string }
+): Promise<void> {
+  const valid_till = new Date(Date.now() + data.offer_valid_days * 86_400_000).toISOString();
+  await updateDoc(doc(db, "bg_offers", offerId), {
+    commission_rate: data.commission_rate,
+    fd_margin: data.fd_margin,
+    offer_valid_days: data.offer_valid_days,
+    conditions: data.conditions,
+    valid_till,
+    updated_at: serverTimestamp(),
   });
+}
+
+/** Accept one offer: marks it ACCEPTED, rejects all others for the same BG, updates BG status */
+export async function acceptOffer(
+  bgDocId: string,
+  offerId: string,
+  bankId: string,
+  bankName: string
+): Promise<void> {
+  const batch = writeBatch(db);
+
+  // 1. Mark accepted offer
+  batch.update(doc(db, "bg_offers", offerId), { status: "ACCEPTED" });
+
+  // 2. Update BG application status
+  batch.update(doc(db, "bg_applications", bgDocId), {
+    status: "OFFER_ACCEPTED" as BGStatus,
+    accepted_bank_id: bankId,
+    accepted_bank_name: bankName,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `EVT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      event_type: "STATUS_CHANGE",
+      description: `Offer from ${bankName} accepted by applicant.`,
+      actor: "Applicant",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+
+  await batch.commit();
+
+  // 3. Reject all other PENDING offers for this BG (outside batch to avoid read-inside-batch)
+  const othersSnap = await getDocs(
+    query(collection(db, "bg_offers"), where("bg_doc_id", "==", bgDocId), where("status", "==", "PENDING"))
+  );
+  const rejectBatch = writeBatch(db);
+  let hasRejects = false;
+  for (const d of othersSnap.docs) {
+    if (d.id !== offerId) {
+      rejectBatch.update(d.ref, { status: "REJECTED" });
+      hasRejects = true;
+    }
+  }
+  if (hasRejects) await rejectBatch.commit();
 }
 
 /** Submits a new offer from a bank for a BG application */
@@ -415,6 +501,7 @@ export async function submitBankOffer(data: {
   const ref = await addDoc(collection(db, "bg_offers"), {
     offer_id,
     bg_id: data.bg_id,
+    bg_doc_id: data.bg_doc_id,       // ← stored so applicant queries work
     bank_id: data.bank_id,
     bank_name: data.bank_name,
     applicant_id: data.applicant_id,
