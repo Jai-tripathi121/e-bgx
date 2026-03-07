@@ -1043,7 +1043,7 @@ export async function getApplicantAllPayments(applicantId: string): Promise<Appl
     ...pfSnap.docs.map((d) => d.id),
     ...fdSnap.docs.map((d) => d.data().bg_doc_id),
   ];
-  const uniqueDocIds = [...new Set(allDocIds)];
+  const uniqueDocIds = Array.from(new Set(allDocIds));
   await Promise.all(
     uniqueDocIds.map(async (docId) => {
       try {
