@@ -8,17 +8,26 @@ import { Badge } from "@/components/ui/badge";
 import { Shield, Bell, Globe, Save, IndianRupee, CheckCircle2, Settings } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/auth-context";
-import { getProcessingFee, setProcessingFee, ProcessingFeeSetting } from "@/lib/firestore";
+import { getProcessingFee, setProcessingFee, ProcessingFeeSetting, getPlatformConfig, savePlatformConfig, PlatformConfig } from "@/lib/firestore";
 
 export default function AdminSettingsPage() {
   const { profile } = useAuth();
   const [saving, setSaving]         = useState(false);
   const [loadingFee, setLoadingFee] = useState(true);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [loadingConfig, setLoadingConfig] = useState(true);
 
   const [feeAmount, setFeeAmount]   = useState("");
   const [feeDesc, setFeeDesc]       = useState("Platform processing fee for BG issuance");
   const [feePayLink, setFeePayLink] = useState("");
   const [currentFee, setCurrentFee] = useState<ProcessingFeeSetting | null>(null);
+
+  // Platform Config controlled state
+  const [cfgPlatformName, setCfgPlatformName]       = useState("e-BGX");
+  const [cfgPlatformUrl, setCfgPlatformUrl]         = useState("https://e-bgx.com");
+  const [cfgMinAmount, setCfgMinAmount]             = useState("500000");
+  const [cfgMaxValidity, setCfgMaxValidity]         = useState("60");
+  const [cfgOfferWindow, setCfgOfferWindow]         = useState("7");
 
   useEffect(() => {
     getProcessingFee()
@@ -31,7 +40,45 @@ export default function AdminSettingsPage() {
         }
       })
       .finally(() => setLoadingFee(false));
+
+    getPlatformConfig()
+      .then((cfg) => {
+        if (cfg) {
+          setCfgPlatformName(cfg.platform_name || "e-BGX");
+          setCfgPlatformUrl(cfg.platform_url || "https://e-bgx.com");
+          setCfgMinAmount(String(cfg.min_bg_amount || 500000));
+          setCfgMaxValidity(String(cfg.max_validity_months || 60));
+          setCfgOfferWindow(String(cfg.offer_response_days || 7));
+        }
+      })
+      .finally(() => setLoadingConfig(false));
   }, []);
+
+  const handleSaveConfig = async () => {
+    if (!profile?.uid) return;
+    if (!cfgPlatformName.trim()) { toast.error("Platform name is required."); return; }
+    const minAmt = Number(cfgMinAmount);
+    const maxVal = Number(cfgMaxValidity);
+    const offerWin = Number(cfgOfferWindow);
+    if (isNaN(minAmt) || minAmt < 0) { toast.error("Invalid min BG amount."); return; }
+    if (isNaN(maxVal) || maxVal < 1) { toast.error("Invalid max validity."); return; }
+    if (isNaN(offerWin) || offerWin < 1) { toast.error("Invalid offer response window."); return; }
+    setSavingConfig(true);
+    try {
+      await savePlatformConfig({
+        platform_name: cfgPlatformName.trim(),
+        platform_url: cfgPlatformUrl.trim(),
+        min_bg_amount: minAmt,
+        max_validity_months: maxVal,
+        offer_response_days: offerWin,
+      }, profile.uid);
+      toast.success("Platform configuration saved.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save configuration.");
+    } finally {
+      setSavingConfig(false);
+    }
+  };
 
   const handleSaveFee = async () => {
     if (!feeAmount || isNaN(Number(feeAmount)) || Number(feeAmount) < 0) {
@@ -132,12 +179,46 @@ export default function AdminSettingsPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <Input label="Platform Name" defaultValue="e-BGX" required />
-                  <Input label="Platform URL" defaultValue="https://e-bgx.com" />
-                  <Input label="Min BG Amount (₹)" defaultValue="500000" type="number" hint="₹5 Lakh minimum" />
-                  <Input label="Max BG Validity (Months)" defaultValue="60" type="number" />
-                  <Input label="Offer Response Window (Days)" defaultValue="7" type="number" hint="Days banks get to quote" />
+                  <Input
+                    label="Platform Name"
+                    value={cfgPlatformName}
+                    onChange={(e) => setCfgPlatformName(e.target.value)}
+                    disabled={loadingConfig}
+                    required
+                  />
+                  <Input
+                    label="Platform URL"
+                    value={cfgPlatformUrl}
+                    onChange={(e) => setCfgPlatformUrl(e.target.value)}
+                    disabled={loadingConfig}
+                  />
+                  <Input
+                    label="Min BG Amount (₹)"
+                    type="number"
+                    value={cfgMinAmount}
+                    onChange={(e) => setCfgMinAmount(e.target.value)}
+                    disabled={loadingConfig}
+                    hint="₹5 Lakh minimum"
+                  />
+                  <Input
+                    label="Max BG Validity (Months)"
+                    type="number"
+                    value={cfgMaxValidity}
+                    onChange={(e) => setCfgMaxValidity(e.target.value)}
+                    disabled={loadingConfig}
+                  />
+                  <Input
+                    label="Offer Response Window (Days)"
+                    type="number"
+                    value={cfgOfferWindow}
+                    onChange={(e) => setCfgOfferWindow(e.target.value)}
+                    disabled={loadingConfig}
+                    hint="Days banks get to quote"
+                  />
                 </div>
+                <Button icon={<Save size={14} />} onClick={handleSaveConfig} loading={savingConfig || loadingConfig}>
+                  Save Configuration
+                </Button>
               </CardContent>
             </Card>
 

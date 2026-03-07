@@ -15,6 +15,18 @@ import { getBankOffers, getIssuanceBGs, BankOffer, FirestoreBG } from "@/lib/fir
 const TIME_FILTERS = ["1W", "1M", "3M", "6M", "YTD", "1Y"] as const;
 type TimeFilter = (typeof TIME_FILTERS)[number];
 
+function getDateCutoff(filter: TimeFilter): Date {
+  const now = new Date();
+  switch (filter) {
+    case "1W": return new Date(now.getTime() - 7 * 86400_000);
+    case "1M": return new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    case "3M": return new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+    case "6M": return new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+    case "YTD": return new Date(now.getFullYear(), 0, 1);
+    case "1Y": return new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+  }
+}
+
 const TYPE_COLORS = ["#1e3a5f", "#2563eb", "#0ea5e9", "#38bdf8", "#7dd3fc", "#bae6fd"];
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -81,23 +93,34 @@ export default function BankAnalyticsPage() {
       .finally(() => setLoading(false));
   }, [profile?.uid]);
 
-  const acceptedOffers = offers.filter((o) => o.status === "ACCEPTED");
+  // Apply time filter cutoff
+  const cutoff = getDateCutoff(timeFilter);
+  const filteredOffers = offers.filter((o) => {
+    const d = new Date(o.submitted_at);
+    return !isNaN(d.getTime()) && d >= cutoff;
+  });
+  const filteredBGs = issuedBGs.filter((b) => {
+    const d = new Date((b as any).issued_at || b.created_at);
+    return !isNaN(d.getTime()) && d >= cutoff;
+  });
+
+  const acceptedOffers = filteredOffers.filter((o) => o.status === "ACCEPTED");
   const totalRevenue = acceptedOffers.reduce(
     (s, o) => s + o.bg_amount * (o.commission_rate / 100) * (o.validity_months / 12), 0
   );
-  const activePortfolio = issuedBGs
+  const activePortfolio = filteredBGs
     .filter((b) => b.status !== "EXPIRED")
     .reduce((s, b) => s + b.amount_inr, 0);
-  const acceptanceRate = offers.length > 0 ? Math.round((acceptedOffers.length / offers.length) * 100) : 0;
-  const avgBGSize = issuedBGs.length > 0 ? Math.round(activePortfolio / issuedBGs.length) : 0;
+  const acceptanceRate = filteredOffers.length > 0 ? Math.round((acceptedOffers.length / filteredOffers.length) * 100) : 0;
+  const avgBGSize = filteredBGs.length > 0 ? Math.round(activePortfolio / filteredBGs.length) : 0;
 
-  const monthlyTrend = groupByMonth(offers);
-  const typeDistribution = groupByType(issuedBGs);
+  const monthlyTrend = groupByMonth(filteredOffers);
+  const typeDistribution = groupByType(filteredBGs);
 
   const metrics = [
     { label: "Offer Acceptance Rate", value: loading ? "—" : `${acceptanceRate}%`, icon: Target, positive: true },
     { label: "Avg BG Ticket Size", value: loading ? "—" : formatINR(avgBGSize, true), icon: Briefcase, positive: true },
-    { label: "Total Offers Sent", value: loading ? "—" : String(offers.length), icon: Clock, positive: true },
+    { label: "Total Offers Sent", value: loading ? "—" : String(filteredOffers.length), icon: Clock, positive: true },
     { label: "BGs Won", value: loading ? "—" : String(acceptedOffers.length), icon: Users, positive: true },
   ];
 
@@ -135,7 +158,7 @@ export default function BankAnalyticsPage() {
           />
           <KPICard
             label="BGs Accepted"
-            value={loading ? "—" : String(issuedBGs.length)}
+            value={loading ? "—" : String(filteredBGs.length)}
             subtext="In issuance pipeline"
             icon={<FileText size={18} />}
           />

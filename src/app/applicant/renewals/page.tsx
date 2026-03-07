@@ -5,14 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
-import { getApplicantBGs, FirestoreBG } from "@/lib/firestore";
+import { getApplicantBGs, createAmendmentRequest, FirestoreBG } from "@/lib/firestore";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "@/lib/firebase";
 import { formatINR, formatDate } from "@/lib/utils";
 import { RefreshCw, X, Upload, AlertCircle, Inbox } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/auth-context";
 
 export default function RenewalsPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [applications, setApplications] = useState<FirestoreBG[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [amendBG, setAmendBG] = useState<FirestoreBG | null>(null);
@@ -20,6 +22,7 @@ export default function RenewalsPage() {
   const [changeAmount, setChangeAmount] = useState(false);
   const [newDate, setNewDate] = useState("");
   const [newAmount, setNewAmount] = useState("");
+  const [docFile, setDocFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -33,15 +36,44 @@ export default function RenewalsPage() {
   const eligibleBGs = applications.filter((b) => b.status === "ISSUED" || b.status === "AMENDED");
 
   const handleSubmit = async () => {
+    if (!amendBG || !user) return;
+    if (!extendDate && !changeAmount) { toast.error("Select at least one amendment type."); return; }
     setLoading(true);
-    await new Promise((res) => setTimeout(res, 1200));
-    toast.success("Amendment request submitted. You will receive new payment instructions from the bank.");
-    setAmendBG(null);
-    setExtendDate(false);
-    setChangeAmount(false);
-    setNewDate("");
-    setNewAmount("");
-    setLoading(false);
+    try {
+      // Upload doc if provided
+      let docUrl = "";
+      if (docFile) {
+        const sRef = storageRef(storage, `bg_docs/${amendBG.id}/amendment_${Date.now()}_${docFile.name}`);
+        await uploadBytes(sRef, docFile);
+        docUrl = await getDownloadURL(sRef);
+      }
+      await createAmendmentRequest({
+        bg_doc_id: amendBG.id,
+        bg_id: amendBG.bg_id,
+        applicant_id: user.uid,
+        applicant_name: profile?.companyName || profile?.displayName || "Applicant",
+        extend_date: extendDate,
+        new_expiry_date: newDate,
+        change_amount: changeAmount,
+        new_amount: newAmount ? Number(newAmount) : 0,
+        doc_url: docUrl,
+      });
+      toast.success("Amendment request submitted. The bank will send new payment instructions.");
+      // Update local state
+      setApplications((prev) =>
+        prev.map((b) => b.id === amendBG.id ? { ...b, status: "AMENDED" as any } : b)
+      );
+      setAmendBG(null);
+      setExtendDate(false);
+      setChangeAmount(false);
+      setNewDate("");
+      setNewAmount("");
+      setDocFile(null);
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to submit amendment request.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loadingData) {
@@ -160,11 +192,18 @@ export default function RenewalsPage() {
                   </div>
                 )}
 
-                <div className="border-2 border-dashed border-gray-200 dark:border-navy-700 rounded-xl p-4 text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-navy-800 transition-colors">
+                <label className="border-2 border-dashed border-gray-200 dark:border-navy-700 rounded-xl p-4 text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-navy-800 transition-colors block">
                   <Upload size={20} className="text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-500">Upload Extension Letter / LoI (PDF)</p>
-                  <p className="text-xs text-gray-400 mt-1">Optional but recommended</p>
-                </div>
+                  {docFile ? (
+                    <p className="text-sm text-navy-600 dark:text-navy-300 font-medium">{docFile.name}</p>
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-500">Upload Extension Letter / LoI (PDF)</p>
+                      <p className="text-xs text-gray-400 mt-1">Optional but recommended</p>
+                    </>
+                  )}
+                  <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setDocFile(e.target.files?.[0] ?? null)} />
+                </label>
 
                 <div className="flex gap-3 pt-2">
                   <Button variant="outline" className="flex-1" onClick={() => setAmendBG(null)}>Cancel</Button>

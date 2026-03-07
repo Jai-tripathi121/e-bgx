@@ -10,10 +10,13 @@ import { BGStatusBadge } from "@/components/ui/badge";
 import {
   getAllBGs, getPendingKYCApplicants, updateKYCStatus,
   createApplicantUserByAdmin, ApplicantUser, FirestoreBG,
+  cancelBGRequest, waivePlatformFee, rebroadcastBG, updateBGStatus,
 } from "@/lib/firestore";
 import { formatINR, formatDate } from "@/lib/utils";
-import { Eye, CheckCircle2, XCircle, FileText, AlertTriangle, Inbox, Plus, X, Copy } from "lucide-react";
+import { BGStatus } from "@/types";
+import { Eye, CheckCircle2, XCircle, FileText, AlertTriangle, Inbox, Plus, X, Copy, Download, RotateCcw, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
 
 type ViewMode = "list" | "kyc" | "detail";
 
@@ -21,7 +24,14 @@ const BLANK_APPLICANT = {
   email: "", password: "", companyName: "", displayName: "", pan: "", gstin: "", mobile: "",
 };
 
+const ALL_STATUSES: BGStatus[] = [
+  "DRAFT", "PAYMENT_REQUESTED", "PROCESSING", "IN_PROGRESS",
+  "OFFER_ACCEPTED", "FD_REQUESTED", "FD_PAID", "BG_DRAFTING",
+  "PAYMENT_CONFIRMED", "ISSUED", "PAY_FEES", "EXPIRED", "AMENDED",
+];
+
 export default function AdminApplicantsPage() {
+  const { user } = useAuth();
   const [view, setView] = useState<ViewMode>("list");
   const [allBGs, setAllBGs] = useState<FirestoreBG[]>([]);
   const [pendingKYC, setPendingKYC] = useState<ApplicantUser[]>([]);
@@ -33,6 +43,10 @@ export default function AdminApplicantsPage() {
   const [form, setForm] = useState(BLANK_APPLICANT);
   const [creating, setCreating] = useState(false);
   const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string; company: string } | null>(null);
+
+  // Override Status modal state
+  const [showOverride, setShowOverride] = useState(false);
+  const [overrideStatus, setOverrideStatus] = useState<BGStatus>("PROCESSING");
 
   useEffect(() => {
     getAllBGs()
@@ -78,6 +92,101 @@ export default function AdminApplicantsPage() {
       toast.error(msg.replace("Firebase: ", "").replace(/\s*\(.*\)\.?$/, ""));
     }
     setCreating(false);
+  };
+
+  // Admin control handlers
+  const handleOverrideStatus = async () => {
+    if (!selectedBG || !user) return;
+    setLoading("override");
+    try {
+      await updateBGStatus(selectedBG.id, overrideStatus, {
+        event_id: `admin_override_${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        actor: user.email || "Admin",
+        actor_role: "admin",
+        description: `Admin overrode status to ${overrideStatus}`,
+      });
+      setSelectedBG((prev) => prev ? { ...prev, status: overrideStatus } : prev);
+      setAllBGs((prev) => prev.map((b) => b.id === selectedBG.id ? { ...b, status: overrideStatus } : b));
+      toast.success(`BG status updated to ${overrideStatus}.`);
+      setShowOverride(false);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to override status.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleWaiveFee = async () => {
+    if (!selectedBG || !user) return;
+    setLoading("waive");
+    try {
+      await waivePlatformFee(selectedBG.id, user.uid);
+      toast.success("Platform fee waived successfully.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to waive fee.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleRebroadcast = async () => {
+    if (!selectedBG || !user) return;
+    setLoading("rebroadcast");
+    try {
+      await rebroadcastBG(selectedBG.id, user.uid);
+      setSelectedBG((prev) => prev ? { ...prev, status: "PROCESSING" } : prev);
+      setAllBGs((prev) => prev.map((b) => b.id === selectedBG.id ? { ...b, status: "PROCESSING" } : b));
+      toast.success("BG re-broadcast to all banks.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to re-broadcast.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleCancelBG = async () => {
+    if (!selectedBG || !user) return;
+    if (!confirm(`Are you sure you want to cancel BG #${selectedBG.bg_id}? This will reset it to DRAFT.`)) return;
+    setLoading("cancel");
+    try {
+      await cancelBGRequest(selectedBG.id, user.uid);
+      setSelectedBG((prev) => prev ? { ...prev, status: "DRAFT" } : prev);
+      setAllBGs((prev) => prev.map((b) => b.id === selectedBG.id ? { ...b, status: "DRAFT" } : b));
+      toast.success("BG request cancelled.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to cancel BG.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleDownloadReport = () => {
+    if (!selectedBG) return;
+    const report = {
+      bg_id: selectedBG.bg_id,
+      status: selectedBG.status,
+      beneficiary_name: selectedBG.beneficiary_name,
+      bg_type: selectedBG.bg_type,
+      amount_inr: selectedBG.amount_inr,
+      validity_months: selectedBG.validity_months,
+      tender_number: selectedBG.tender_number,
+      accepted_bank_name: selectedBG.accepted_bank_name,
+      official_bg_number: selectedBG.official_bg_number,
+      created_at: selectedBG.created_at,
+      issued_at: selectedBG.issued_at,
+      expiry_date: selectedBG.expiry_date,
+      audit_trail: selectedBG.audit_trail,
+      documents: selectedBG.documents,
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `BG-${selectedBG.bg_id}-report.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("Report downloaded.");
   };
 
   if (view === "detail" && selectedBG) {
@@ -143,11 +252,43 @@ export default function AdminApplicantsPage() {
               <Card>
                 <CardHeader><CardTitle>Admin Controls</CardTitle></CardHeader>
                 <CardContent className="space-y-2.5">
-                  <Button variant="outline" size="sm" className="w-full">Override Status</Button>
-                  <Button variant="outline" size="sm" className="w-full">Waive Platform Fee</Button>
-                  <Button variant="outline" size="sm" className="w-full">Re-broadcast to Banks</Button>
-                  <Button variant="outline" size="sm" className="w-full">Download Full Report</Button>
-                  <Button variant="ghost" size="sm" className="w-full text-red-500 hover:text-red-600">Cancel BG Request</Button>
+                  <Button
+                    variant="outline" size="sm" className="w-full"
+                    onClick={() => { setOverrideStatus(selectedBG.status as BGStatus); setShowOverride(true); }}
+                    loading={loading === "override"}
+                  >
+                    Override Status
+                  </Button>
+                  <Button
+                    variant="outline" size="sm" className="w-full"
+                    onClick={handleWaiveFee}
+                    loading={loading === "waive"}
+                  >
+                    Waive Platform Fee
+                  </Button>
+                  <Button
+                    variant="outline" size="sm" className="w-full"
+                    onClick={handleRebroadcast}
+                    loading={loading === "rebroadcast"}
+                    icon={<RotateCcw size={13} />}
+                  >
+                    Re-broadcast to Banks
+                  </Button>
+                  <Button
+                    variant="outline" size="sm" className="w-full"
+                    onClick={handleDownloadReport}
+                    icon={<Download size={13} />}
+                  >
+                    Download Full Report
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm" className="w-full text-red-500 hover:text-red-600"
+                    onClick={handleCancelBG}
+                    loading={loading === "cancel"}
+                    icon={<AlertCircle size={13} />}
+                  >
+                    Cancel BG Request
+                  </Button>
                 </CardContent>
               </Card>
 
@@ -172,6 +313,43 @@ export default function AdminApplicantsPage() {
             </div>
           </div>
         </div>
+
+        {/* Override Status Modal */}
+        {showOverride && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowOverride(false)}>
+            <div className="bg-white dark:bg-navy-900 rounded-2xl shadow-2xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <div className="px-6 py-5 border-b border-gray-100 dark:border-navy-800 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900 dark:text-white">Override Status</h2>
+                  <p className="text-sm text-gray-500">#{selectedBG.bg_id}</p>
+                </div>
+                <button onClick={() => setShowOverride(false)} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-navy-800 text-gray-500">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">New Status</label>
+                  <select
+                    value={overrideStatus}
+                    onChange={(e) => setOverrideStatus(e.target.value as BGStatus)}
+                    className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+                  >
+                    {ALL_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" className="flex-1" onClick={() => setShowOverride(false)}>Cancel</Button>
+                  <Button className="flex-1" onClick={handleOverrideStatus} loading={loading === "override"}>
+                    Apply Override
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }

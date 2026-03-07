@@ -30,18 +30,37 @@ export default function BankProfilePage() {
     officerMobile: "",
   });
 
+  // Commission defaults (controlled)
+  const [commMin, setCommMin]       = useState("1.25");
+  const [commMax, setCommMax]       = useState("2.50");
+  const [fdMargin, setFdMargin]     = useState("100");
+  const [minBGAmt, setMinBGAmt]     = useState("5000000");
+  const [maxBGAmt, setMaxBGAmt]     = useState("500000000");
+  const [maxValidity, setMaxValidity] = useState("36");
+
   // Populate form from profile once loaded
   useEffect(() => {
     if (!profile) return;
+    const p = profile as any;
     setForm({
-      bankName: (profile as any).bankName ?? "",
-      branchCode: (profile as any).branchCode ?? "",
-      branchEmail: (profile as any).branchEmail ?? profile.email ?? "",
-      address: (profile as any).address ?? "",
-      officerName: (profile as any).officerName ?? profile.displayName ?? "",
-      officerDesignation: (profile as any).officerDesignation ?? "",
-      officerMobile: (profile as any).officerMobile ?? profile.mobile ?? "",
+      bankName: p.bankName ?? "",
+      branchCode: p.branchCode ?? "",
+      branchEmail: p.branchEmail ?? profile.email ?? "",
+      address: p.address ?? "",
+      officerName: p.officerName ?? profile.displayName ?? "",
+      officerDesignation: p.officerDesignation ?? "",
+      officerMobile: p.officerMobile ?? (profile as any).mobile ?? "",
     });
+    // Load commission defaults
+    if (p.commMin !== undefined) setCommMin(String(p.commMin));
+    if (p.commMax !== undefined) setCommMax(String(p.commMax));
+    if (p.fdMargin !== undefined) setFdMargin(String(p.fdMargin));
+    if (p.minBGAmt !== undefined) setMinBGAmt(String(p.minBGAmt));
+    if (p.maxBGAmt !== undefined) setMaxBGAmt(String(p.maxBGAmt));
+    if (p.maxValidity !== undefined) setMaxValidity(String(p.maxValidity));
+    // Load BG types and sectors
+    if (Array.isArray(p.selectedTypes)) setSelectedTypes(p.selectedTypes);
+    if (Array.isArray(p.selectedSectors)) setSelectedSectors(p.selectedSectors);
   }, [profile]);
 
   const handleSave = async () => {
@@ -57,6 +76,16 @@ export default function BankProfilePage() {
         officerDesignation: form.officerDesignation,
         officerMobile: form.officerMobile,
         displayName: form.officerName || form.bankName,
+        // Commission defaults
+        commMin: Number(commMin) || 1.25,
+        commMax: Number(commMax) || 2.50,
+        fdMargin: Number(fdMargin) || 100,
+        minBGAmt: Number(minBGAmt) || 5000000,
+        maxBGAmt: Number(maxBGAmt) || 500000000,
+        maxValidity: Number(maxValidity) || 36,
+        // Preferences
+        selectedTypes,
+        selectedSectors,
       });
       toast.success("Profile updated successfully.");
     } catch (err: any) {
@@ -168,13 +197,48 @@ export default function BankProfilePage() {
                 <CardTitle>Default Commission Parameters</CardTitle>
               </CardHeader>
               <CardContent>
+                <p className="text-xs text-gray-500 mb-3">These defaults pre-fill your offer quotes. You can still change them per-offer.</p>
                 <div className="grid grid-cols-2 gap-4">
-                  <Input label="Min Commission Rate (%)" defaultValue="1.25" type="number" hint="Per annum" />
-                  <Input label="Max Commission Rate (%)" defaultValue="2.50" type="number" />
-                  <Input label="Default FD Margin (%)" defaultValue="100" type="number" hint="% of BG amount" />
-                  <Input label="Min BG Amount (₹)" defaultValue="5000000" type="number" hint="₹50 L" />
-                  <Input label="Max BG Amount (₹)" defaultValue="500000000" type="number" hint="₹50 Cr" />
-                  <Input label="Max Validity (Months)" defaultValue="36" type="number" />
+                  <Input
+                    label="Min Commission Rate (%)"
+                    type="number"
+                    value={commMin}
+                    onChange={(e) => setCommMin(e.target.value)}
+                    hint="Per annum"
+                  />
+                  <Input
+                    label="Max Commission Rate (%)"
+                    type="number"
+                    value={commMax}
+                    onChange={(e) => setCommMax(e.target.value)}
+                  />
+                  <Input
+                    label="Default FD Margin (%)"
+                    type="number"
+                    value={fdMargin}
+                    onChange={(e) => setFdMargin(e.target.value)}
+                    hint="% of BG amount"
+                  />
+                  <Input
+                    label="Min BG Amount (₹)"
+                    type="number"
+                    value={minBGAmt}
+                    onChange={(e) => setMinBGAmt(e.target.value)}
+                    hint="₹50 L"
+                  />
+                  <Input
+                    label="Max BG Amount (₹)"
+                    type="number"
+                    value={maxBGAmt}
+                    onChange={(e) => setMaxBGAmt(e.target.value)}
+                    hint="₹50 Cr"
+                  />
+                  <Input
+                    label="Max Validity (Months)"
+                    type="number"
+                    value={maxValidity}
+                    onChange={(e) => setMaxValidity(e.target.value)}
+                  />
                 </div>
               </CardContent>
             </Card>

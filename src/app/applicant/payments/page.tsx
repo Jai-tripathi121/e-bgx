@@ -2,35 +2,49 @@
 import { useEffect, useState } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { KPICard } from "@/components/ui/card";
-import { TxnStatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
-import { getApplicantBGs, FirestoreBG } from "@/lib/firestore";
+import { getApplicantAllPayments, ApplicantPaymentRecord } from "@/lib/firestore";
 import { formatINR, formatDate } from "@/lib/utils";
-import { CreditCard, FileText, Inbox } from "lucide-react";
+import { CreditCard, FileText, Inbox, ExternalLink } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+
+const STATUS_COLORS: Record<string, string> = {
+  PENDING:          "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+  RECEIPT_UPLOADED: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  APPROVED:         "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+  REJECTED:         "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  PLATFORM_FEE: "Platform Processing Fee",
+  FD_DEPOSIT:   "FD Deposit",
+  BANK_FEE:     "Bank Fee",
+};
 
 export default function PaymentsPage() {
   const { user } = useAuth();
-  const [applications, setApplications] = useState<FirestoreBG[]>([]);
+  const [payments, setPayments] = useState<ApplicantPaymentRecord[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
   useEffect(() => {
     if (!user) return;
-    getApplicantBGs(user.uid)
-      .then(setApplications)
-      .catch(() => setApplications([]))
+    getApplicantAllPayments(user.uid)
+      .then(setPayments)
+      .catch(() => setPayments([]))
       .finally(() => setLoadingData(false));
   }, [user]);
 
-  const allTxns = applications.flatMap((bg) =>
-    (bg.payments || []).map((p: any) => ({ ...p, bg_ref: bg.bg_id, beneficiary: bg.beneficiary_name })),
-  ).sort((a: any, b: any) => new Date(b.txn_date).getTime() - new Date(a.txn_date).getTime());
-
-  const totalSpent = allTxns.filter((t: any) => t.status === "SUCCESS" || t.status === "VERIFIED").reduce((s: number, t: any) => s + t.amount_inr, 0);
-  const platformFees = allTxns.filter((t: any) => t.type === "PLATFORM_FEE").reduce((s: number, t: any) => s + t.amount_inr, 0);
-  const fdPlaced = allTxns.filter((t: any) => t.type === "FD_DEPOSIT").reduce((s: number, t: any) => s + t.amount_inr, 0);
+  const totalSpent = payments
+    .filter((p) => p.status === "APPROVED")
+    .reduce((s, p) => s + p.amount, 0);
+  const platformFees = payments
+    .filter((p) => p.type === "PLATFORM_FEE" && p.status === "APPROVED")
+    .reduce((s, p) => s + p.amount, 0);
+  const fdPlaced = payments
+    .filter((p) => p.type === "FD_DEPOSIT" && p.status === "APPROVED")
+    .reduce((s, p) => s + p.amount, 0);
 
   if (loadingData) {
     return (
@@ -48,13 +62,13 @@ export default function PaymentsPage() {
       <PortalHeader title="Payment History" subtitle="All financial transactions across your BG applications" />
       <div className="portal-content space-y-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPICard label="Total Spent" value={formatINR(totalSpent, true)} subtext="All verified transactions" icon={<CreditCard size={18} />} variant="navy" />
-          <KPICard label="Transactions" value={String(allTxns.length)} subtext="Across all BGs" />
-          <KPICard label="Platform Fees" value={formatINR(platformFees, true)} subtext="1% per BG" />
+          <KPICard label="Total Paid" value={formatINR(totalSpent, true)} subtext="All approved payments" icon={<CreditCard size={18} />} variant="navy" />
+          <KPICard label="Transactions" value={String(payments.length)} subtext="Across all BGs" />
+          <KPICard label="Platform Fees" value={formatINR(platformFees, true)} subtext="e-BGX processing fee" />
           <KPICard label="FD Placed" value={formatINR(fdPlaced, true)} subtext="Collateral deposits" />
         </div>
 
-        {allTxns.length === 0 ? (
+        {payments.length === 0 ? (
           <Card>
             <CardContent>
               <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -73,35 +87,45 @@ export default function PaymentsPage() {
             <TableHead>
               <tr>
                 <TableHeader>Date</TableHeader>
-                <TableHeader>Transaction Ref</TableHeader>
-                <TableHeader>Description</TableHeader>
                 <TableHeader>Against BG</TableHeader>
-                <TableHeader>Beneficiary</TableHeader>
+                <TableHeader>Description</TableHeader>
+                <TableHeader>Type</TableHeader>
                 <TableHeader>Amount</TableHeader>
                 <TableHeader>Status</TableHeader>
                 <TableHeader>Receipt</TableHeader>
               </tr>
             </TableHead>
             <TableBody>
-              {allTxns.map((txn: any) => (
-                <TableRow key={txn.txn_id}>
-                  <TableCell className="text-xs text-gray-400">{formatDate(txn.txn_date)}</TableCell>
+              {payments.map((p) => (
+                <TableRow key={p.id}>
+                  <TableCell className="text-xs text-gray-400">{p.created_at ? formatDate(p.created_at) : "—"}</TableCell>
                   <TableCell>
-                    <span className="font-mono text-xs text-gray-600 dark:text-gray-400">{txn.txn_id}</span>
+                    <span className="font-mono text-sm text-navy-700 dark:text-navy-200">#{p.bg_id}</span>
                   </TableCell>
                   <TableCell>
-                    <span className="font-medium text-gray-900 dark:text-white">{txn.description}</span>
+                    <span className="font-medium text-gray-900 dark:text-white">{p.description}</span>
                   </TableCell>
                   <TableCell>
-                    <span className="font-mono text-sm text-navy-700 dark:text-navy-200">#{txn.bg_ref}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-navy-50 dark:bg-navy-800 text-navy-600 dark:text-navy-300 font-medium">
+                      {TYPE_LABELS[p.type] ?? p.type}
+                    </span>
                   </TableCell>
-                  <TableCell>{txn.beneficiary}</TableCell>
                   <TableCell>
-                    <span className="font-semibold tabular">{formatINR(txn.amount_inr, true)}</span>
+                    <span className="font-semibold tabular">{formatINR(p.amount, true)}</span>
                   </TableCell>
-                  <TableCell><TxnStatusBadge status={txn.status} /></TableCell>
                   <TableCell>
-                    <Button size="xs" variant="ghost" icon={<FileText size={12} />}>View</Button>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${STATUS_COLORS[p.status] ?? "bg-gray-100 text-gray-600"}`}>
+                      {p.status.replace(/_/g, " ")}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {p.receipt_url ? (
+                      <a href={p.receipt_url} target="_blank" rel="noreferrer">
+                        <Button size="xs" variant="ghost" icon={<ExternalLink size={12} />}>View</Button>
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

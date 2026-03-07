@@ -952,3 +952,219 @@ export async function getAllIssuanceBGs(): Promise<FirestoreBG[]> {
   }
   return results;
 }
+
+// ── Amendment / Renewal Requests ──────────────────────────────────────────────
+
+export interface AmendmentRequest {
+  id: string;
+  bg_doc_id: string;
+  bg_id: string;
+  applicant_id: string;
+  applicant_name: string;
+  extend_date: boolean;
+  new_expiry_date: string;
+  change_amount: boolean;
+  new_amount: number;
+  doc_url: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  created_at: string;
+  resolved_at: string;
+  resolved_by: string;
+  remarks: string;
+}
+
+export async function createAmendmentRequest(data: {
+  bg_doc_id: string;
+  bg_id: string;
+  applicant_id: string;
+  applicant_name: string;
+  extend_date: boolean;
+  new_expiry_date: string;
+  change_amount: boolean;
+  new_amount: number;
+  doc_url?: string;
+}): Promise<string> {
+  const ref = doc(collection(db, "bg_amendments"));
+  await setDoc(ref, {
+    ...data,
+    doc_url: data.doc_url ?? "",
+    status: "PENDING",
+    created_at: serverTimestamp(),
+    resolved_at: "",
+    resolved_by: "",
+    remarks: "",
+  });
+  // Add audit trail entry to BG
+  await updateDoc(doc(db, "bg_applications", data.bg_doc_id), {
+    status: "AMENDED",
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: ref.id,
+      event: "AMENDMENT_REQUESTED",
+      description: `Amendment request submitted by applicant: ${data.extend_date ? "extend validity" : ""}${data.change_amount ? " change amount" : ""}`.trim(),
+      actor: data.applicant_name,
+      actor_role: "applicant",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+  return ref.id;
+}
+
+export async function getAmendmentRequests(bgDocId: string): Promise<AmendmentRequest[]> {
+  const q = query(collection(db, "bg_amendments"), where("bg_doc_id", "==", bgDocId));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as AmendmentRequest));
+}
+
+// ── Applicant Payments (unified view) ─────────────────────────────────────────
+
+export interface ApplicantPaymentRecord {
+  id: string;
+  bg_doc_id: string;
+  bg_id: string;
+  type: "PLATFORM_FEE" | "FD_DEPOSIT" | "BANK_FEE";
+  description: string;
+  amount: number;
+  status: string;
+  receipt_url: string;
+  created_at: string;
+  approved_at: string;
+}
+
+export async function getApplicantAllPayments(applicantId: string): Promise<ApplicantPaymentRecord[]> {
+  const [pfSnap, fdSnap] = await Promise.all([
+    getDocs(query(collection(db, "bg_processing_fees"), where("applicant_id", "==", applicantId))),
+    getDocs(query(collection(db, "bg_payment_requests"), where("applicant_id", "==", applicantId))),
+  ]);
+
+  // Load bg_id for each BG doc id
+  const bgIds: Record<string, string> = {};
+  const allDocIds = [
+    ...pfSnap.docs.map((d) => d.id),
+    ...fdSnap.docs.map((d) => d.data().bg_doc_id),
+  ];
+  const uniqueDocIds = [...new Set(allDocIds)];
+  await Promise.all(
+    uniqueDocIds.map(async (docId) => {
+      try {
+        const bgSnap = await getDoc(doc(db, "bg_applications", docId));
+        if (bgSnap.exists()) bgIds[docId] = bgSnap.data().bg_id ?? docId;
+      } catch { bgIds[docId] = docId; }
+    })
+  );
+
+  const platformFees: ApplicantPaymentRecord[] = pfSnap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      bg_doc_id: d.id,
+      bg_id: bgIds[d.id] ?? d.id,
+      type: "PLATFORM_FEE",
+      description: "e-BGX Platform Processing Fee",
+      amount: data.amount ?? 0,
+      status: data.status ?? "PENDING",
+      receipt_url: data.receipt_url ?? "",
+      created_at: data.created_at?.toDate?.()?.toISOString() ?? "",
+      approved_at: data.approved_at ?? "",
+    };
+  });
+
+  const fdPayments: ApplicantPaymentRecord[] = fdSnap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      bg_doc_id: data.bg_doc_id,
+      bg_id: bgIds[data.bg_doc_id] ?? data.bg_doc_id,
+      type: data.description?.toLowerCase().includes("fd") ? "FD_DEPOSIT" : "BANK_FEE",
+      description: data.description ?? "Bank FD / Fee Payment",
+      amount: data.amount ?? 0,
+      status: data.status ?? "PENDING",
+      receipt_url: data.receipt_url ?? "",
+      created_at: data.created_at?.toDate?.()?.toISOString() ?? "",
+      approved_at: data.approved_at ?? "",
+    };
+  });
+
+  return [...platformFees, ...fdPayments].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+}
+
+// ── Admin BG Controls ──────────────────────────────────────────────────────────
+
+export async function cancelBGRequest(bgDocId: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    status: "DRAFT",
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `cancel-${Date.now()}`,
+      event: "CANCELLED_BY_ADMIN",
+      description: "BG request cancelled by admin",
+      actor: adminId,
+      actor_role: "admin",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+export async function waivePlatformFee(bgDocId: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    platform_fee_paid: true,
+    platform_fee_waived: true,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `waive-${Date.now()}`,
+      event: "PLATFORM_FEE_WAIVED",
+      description: "Platform fee waived by admin",
+      actor: adminId,
+      actor_role: "admin",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+export async function rebroadcastBG(bgDocId: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    status: "PROCESSING",
+    accepted_bank_id: null,
+    accepted_bank_name: null,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `rebroad-${Date.now()}`,
+      event: "REBROADCASTED",
+      description: "BG re-broadcast to all banks by admin",
+      actor: adminId,
+      actor_role: "admin",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+// ── Platform Configuration ─────────────────────────────────────────────────────
+
+export interface PlatformConfig {
+  platform_name: string;
+  platform_url: string;
+  min_bg_amount: number;
+  max_validity_months: number;
+  offer_response_days: number;
+  updated_at: string;
+  updated_by: string;
+}
+
+export async function getPlatformConfig(): Promise<PlatformConfig | null> {
+  const snap = await getDoc(doc(db, "settings", "platform_config"));
+  if (!snap.exists()) return null;
+  return snap.data() as PlatformConfig;
+}
+
+export async function savePlatformConfig(
+  data: Omit<PlatformConfig, "updated_at" | "updated_by">,
+  adminId: string
+): Promise<void> {
+  await setDoc(doc(db, "settings", "platform_config"), {
+    ...data,
+    updated_at: serverTimestamp(),
+    updated_by: adminId,
+  });
+}
