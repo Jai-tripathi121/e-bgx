@@ -518,10 +518,5 @@ export async function submitBankOffer(data: {
     status: "PENDING",
   });
 
-  // Touch the BG application so applicant sees it's been picked up
-  await updateDoc(doc(db, "bg_applications", data.bg_doc_id), {
-    updated_at: serverTimestamp(),
-  });
-
   return ref.id;
 }
