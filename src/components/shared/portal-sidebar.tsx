@@ -74,13 +74,13 @@ export function PortalSidebar({ portal, userName = "User", entityName = "" }: Po
   };
 
   return (
-    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-navy-900 dark:bg-navy-950 border-r border-navy-800 z-30">
+    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col bg-black border-r border-white/8 z-30">
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-navy-800">
+      <div className="px-5 py-5 border-b border-white/8">
         <Link href={`/${portal}/dashboard`}>
           <Logo variant="light" size="sm" />
         </Link>
-        <p className="text-[10px] text-navy-400 mt-1 font-medium uppercase tracking-wider">
+        <p className="text-[10px] text-white/35 mt-1 font-medium uppercase tracking-wider">
           {portalLabels[portal]}
         </p>
       </div>
@@ -96,46 +96,46 @@ export function PortalSidebar({ portal, userName = "User", entityName = "" }: Po
               className={cn(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group",
                 isActive
-                  ? "bg-white/10 text-white"
-                  : "text-navy-300 hover:bg-white/5 hover:text-white",
+                  ? "bg-white text-black"
+                  : "text-white/55 hover:bg-white/8 hover:text-white",
               )}
             >
-              <span className={cn("shrink-0 transition-colors", isActive ? "text-white" : "text-navy-400 group-hover:text-white")}>
+              <span className={cn("shrink-0 transition-colors", isActive ? "text-black" : "text-white/40 group-hover:text-white")}>
                 {item.icon}
               </span>
               <span className="flex-1 truncate">{item.label}</span>
               {item.badge && (
-                <span className="bg-navy-700 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                <span className="bg-white/20 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
                   {item.badge}
                 </span>
               )}
-              {isActive && <ChevronRight size={12} className="text-navy-400" />}
+              {isActive && <ChevronRight size={12} className="text-black/40" />}
             </Link>
           );
         })}
       </nav>
 
       {/* Bottom user area */}
-      <div className="px-3 pb-4 space-y-1 border-t border-navy-800 pt-3">
-        <button className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-navy-300 hover:bg-white/5 hover:text-white text-sm transition-all">
-          <Bell size={16} className="text-navy-400" />
+      <div className="px-3 pb-4 space-y-0.5 border-t border-white/8 pt-3">
+        <button className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-white/55 hover:bg-white/8 hover:text-white text-sm transition-all">
+          <Bell size={16} className="text-white/35" />
           <span>Notifications</span>
         </button>
-        <button className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-navy-300 hover:bg-white/5 hover:text-white text-sm transition-all">
-          <HelpCircle size={16} className="text-navy-400" />
+        <button className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-white/55 hover:bg-white/8 hover:text-white text-sm transition-all">
+          <HelpCircle size={16} className="text-white/35" />
           <span>Help & Support</span>
         </button>
 
-        <div className="mt-2 px-3 py-3 rounded-lg bg-navy-800/60">
+        <div className="mt-2 px-3 py-3 rounded-lg bg-white/5 border border-white/8">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-full bg-navy-600 flex items-center justify-center text-white text-xs font-semibold shrink-0">
+            <div className="w-7 h-7 rounded-full bg-white/15 flex items-center justify-center text-white text-xs font-semibold shrink-0">
               {userName.charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-white truncate">{userName}</p>
-              <p className="text-[10px] text-navy-400 truncate">{entityName}</p>
+              <p className="text-[10px] text-white/35 truncate">{entityName}</p>
             </div>
-            <button onClick={handleLogout} className="text-navy-400 hover:text-white transition-colors" title="Sign out">
+            <button onClick={handleLogout} className="text-white/35 hover:text-white transition-colors" title="Sign out">
               <LogOut size={14} />
             </button>
           </div>

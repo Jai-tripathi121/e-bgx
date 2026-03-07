@@ -51,10 +51,13 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         (isApplicant() && resource.data.applicant_id == request.auth.uid &&
           (resource.data.status == 'DRAFT' ||
+           resource.data.status == 'OPEN' ||
+           resource.data.status == 'QUOTED' ||
            resource.data.status == 'PROCESSING' ||
            resource.data.status == 'OFFER_ACCEPTED' ||
            resource.data.status == 'FD_REQUESTED' ||
-           resource.data.status == 'FD_PAID')) ||
+           resource.data.status == 'FD_PAID' ||
+           resource.data.status == 'BG_DRAFTING')) ||
         isBank() ||
         isAdmin()
       );
