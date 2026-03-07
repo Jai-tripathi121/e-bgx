@@ -12,7 +12,6 @@ service cloud.firestore {
     }
 
     // Read the caller's role from their Firestore user document.
-    // Custom JWT claims are never set in this project, so we read from Firestore.
     function callerRole() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
@@ -32,7 +31,6 @@ service cloud.firestore {
     // ─── Users ──────────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read:   if isSignedIn() && (isOwner(userId) || isAdmin());
-      // Allow: self-create (normal signup / secondary-auth creation) OR admin provisioning
       allow create: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow delete: if isAdmin();
@@ -50,10 +48,12 @@ service cloud.firestore {
         isAdmin()
       );
       allow update: if isSignedIn() && (
-        // Applicant can update their own BG in DRAFT or PROCESSING state
-        // (PROCESSING → OFFER_ACCEPTED happens when they accept a bank offer)
         (isApplicant() && resource.data.applicant_id == request.auth.uid &&
-          (resource.data.status == 'DRAFT' || resource.data.status == 'PROCESSING')) ||
+          (resource.data.status == 'DRAFT' ||
+           resource.data.status == 'PROCESSING' ||
+           resource.data.status == 'OFFER_ACCEPTED' ||
+           resource.data.status == 'FD_REQUESTED' ||
+           resource.data.status == 'FD_PAID')) ||
         isBank() ||
         isAdmin()
       );
@@ -69,12 +69,65 @@ service cloud.firestore {
       );
       allow create: if isSignedIn() && (isBank() || isAdmin());
       allow update: if isSignedIn() && (
-        // Bank edits their own quote; applicant accepts/rejects offers on their BGs
         resource.data.bank_id == request.auth.uid ||
         resource.data.applicant_id == request.auth.uid ||
         isAdmin()
       );
       allow delete: if isAdmin();
+    }
+
+    // ─── BG Messages ────────────────────────────────────────────────────────
+    match /bg_messages/{messageId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.sender_id == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ─── BG Documents ───────────────────────────────────────────────────────
+    match /bg_documents/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.uploader_id == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ─── BG Payment Requests (FD / Bank Fees) ───────────────────────────────
+    match /bg_payment_requests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.bank_id == request.auth.uid ||
+        resource.data.applicant_id == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isSignedIn() && isBank();
+      allow update: if isSignedIn() && (
+        // Bank can approve/reject; applicant can upload receipt
+        resource.data.bank_id == request.auth.uid ||
+        resource.data.applicant_id == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── Processing Fee Payments (to e-BGX) ─────────────────────────────────
+    match /bg_processing_fees/{bgDocId} {
+      allow read: if isSignedIn() && (
+        resource.data.applicant_id == request.auth.uid ||
+        isAdmin() ||
+        isBank()
+      );
+      allow create: if isSignedIn() && (isApplicant() || isAdmin());
+      allow update: if isSignedIn() && (
+        resource.data.applicant_id == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // ─── Settings (admin-managed, all authenticated can read) ───────────────
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     // ─── Issued BGs ─────────────────────────────────────────────────────────
@@ -110,7 +163,7 @@ service cloud.firestore {
         resource.data.user_id == request.auth.uid;
     }
 
-    // ─── Platform Config (admin-only write) ─────────────────────────────────
+    // ─── Platform Config ────────────────────────────────────────────────────
     match /platform_config/{configId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();

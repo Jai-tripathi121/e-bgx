@@ -1,37 +1,126 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Bell, CreditCard, Settings, Key, Globe, Save } from "lucide-react";
+import { Shield, Bell, Globe, Save, IndianRupee, CheckCircle2, Settings } from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
+import { getProcessingFee, setProcessingFee, ProcessingFeeSetting } from "@/lib/firestore";
 
 export default function AdminSettingsPage() {
-  const [saving, setSaving] = useState(false);
+  const { profile } = useAuth();
+  const [saving, setSaving]         = useState(false);
+  const [loadingFee, setLoadingFee] = useState(true);
 
-  const handleSave = async () => {
+  const [feeAmount, setFeeAmount]   = useState("");
+  const [feeDesc, setFeeDesc]       = useState("Platform processing fee for BG issuance");
+  const [feePayLink, setFeePayLink] = useState("");
+  const [currentFee, setCurrentFee] = useState<ProcessingFeeSetting | null>(null);
+
+  useEffect(() => {
+    getProcessingFee()
+      .then((fee) => {
+        if (fee) {
+          setCurrentFee(fee);
+          setFeeAmount(String(fee.amount));
+          setFeeDesc(fee.description);
+          setFeePayLink(fee.payment_link || "");
+        }
+      })
+      .finally(() => setLoadingFee(false));
+  }, []);
+
+  const handleSaveFee = async () => {
+    if (!feeAmount || isNaN(Number(feeAmount)) || Number(feeAmount) < 0) {
+      toast.error("Enter a valid fee amount."); return;
+    }
+    if (!profile?.uid) return;
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 900));
-    toast.success("Platform settings saved.");
-    setSaving(false);
+    try {
+      await setProcessingFee(Number(feeAmount), feeDesc, feePayLink, profile.uid);
+      const updated = await getProcessingFee();
+      setCurrentFee(updated);
+      toast.success("Processing fee updated successfully.");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <>
-      <PortalHeader
-        title="Platform Settings"
-        subtitle="Configure global platform parameters and integrations"
-        actions={
-          <Button icon={<Save size={14} />} onClick={handleSave} loading={saving}>
-            Save Settings
-          </Button>
-        }
-      />
+      <PortalHeader title="Platform Settings" subtitle="Configure global platform parameters" />
       <div className="portal-content space-y-6">
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
+
+            {/* Processing Fee */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <IndianRupee size={16} className="text-navy-500" />
+                  Processing Fee (Charged to Applicants)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {currentFee && (
+                  <div className="flex items-center gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
+                    <CheckCircle2 size={16} className="text-green-600 shrink-0" />
+                    <div className="text-sm">
+                      <p className="font-semibold text-green-700 dark:text-green-400">
+                        Current Fee: ₹{currentFee.amount.toLocaleString("en-IN")}
+                      </p>
+                      <p className="text-green-600 dark:text-green-500 text-xs">{currentFee.description}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Fee Amount (₹) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number" min="0"
+                      className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+                      placeholder="e.g. 5000"
+                      value={feeAmount}
+                      onChange={(e) => setFeeAmount(e.target.value)}
+                      disabled={loadingFee}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                    <input
+                      className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+                      placeholder="Platform processing fee"
+                      value={feeDesc}
+                      onChange={(e) => setFeeDesc(e.target.value)}
+                      disabled={loadingFee}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Payment Link / Account Details
+                    <span className="text-xs font-normal text-gray-400 ml-1">(UPI, Razorpay link, or NEFT details)</span>
+                  </label>
+                  <input
+                    className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+                    placeholder="upi@bankname  or  https://rzp.io/l/...  or  IFSC + A/C details"
+                    value={feePayLink}
+                    onChange={(e) => setFeePayLink(e.target.value)}
+                    disabled={loadingFee}
+                  />
+                </div>
+                <Button icon={<Save size={14} />} onClick={handleSaveFee} loading={saving || loadingFee}>
+                  Save Processing Fee
+                </Button>
+              </CardContent>
+            </Card>
 
             {/* Platform Config */}
             <Card>
@@ -45,34 +134,9 @@ export default function AdminSettingsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <Input label="Platform Name" defaultValue="e-BGX" required />
                   <Input label="Platform URL" defaultValue="https://e-bgx.com" />
-                  <Input label="Applicant Portal URL" defaultValue="https://applicant.e-bgx.com" />
-                  <Input label="Bank Portal URL" defaultValue="https://bank.e-bgx.com" />
-                  <Input label="Platform Fee (%)" defaultValue="1" type="number" hint="% of BG amount (currently 1%)" required />
                   <Input label="Min BG Amount (₹)" defaultValue="500000" type="number" hint="₹5 Lakh minimum" />
                   <Input label="Max BG Validity (Months)" defaultValue="60" type="number" />
                   <Input label="Offer Response Window (Days)" defaultValue="7" type="number" hint="Days banks get to quote" />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Payment Gateway */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CreditCard size={16} className="text-navy-500" />
-                  Payment Gateway (Razorpay)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <Input label="Razorpay Key ID" defaultValue="rzp_live_••••••••••" />
-                  <Input label="Razorpay Key Secret" defaultValue="••••••••••••••••" type="password" />
-                  <Input label="Webhook Secret" defaultValue="wh_••••••••••" />
-                  <Input label="Settlement Account IFSC" defaultValue="CNRB0001234" />
-                </div>
-                <div className="flex items-center gap-2 mt-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  <p className="text-xs text-green-600 font-medium">Razorpay Connected — Live Mode</p>
                 </div>
               </CardContent>
             </Card>
@@ -88,20 +152,18 @@ export default function AdminSettingsPage() {
               <CardContent>
                 <div className="space-y-3">
                   {[
-                    { event: "New BG Application", channels: ["Email", "SMS"], status: "Active" },
-                    { event: "Platform Fee Due", channels: ["Email", "WhatsApp"], status: "Active" },
-                    { event: "Offer Received", channels: ["Email"], status: "Active" },
-                    { event: "BG Issued", channels: ["Email", "SMS", "WhatsApp"], status: "Active" },
-                    { event: "BG Expiry (30 days)", channels: ["Email", "SMS"], status: "Draft" },
-                    { event: "BG Expiry (7 days)", channels: ["Email", "SMS", "WhatsApp"], status: "Draft" },
+                    { event: "New BG Application",    channels: ["Email", "SMS"],             status: "Active" },
+                    { event: "Processing Fee Due",     channels: ["Email", "WhatsApp"],       status: "Active" },
+                    { event: "FD Payment Requested",   channels: ["Email", "SMS"],            status: "Active" },
+                    { event: "Receipt Uploaded",       channels: ["Email"],                   status: "Active" },
+                    { event: "BG Issued",              channels: ["Email", "SMS", "WhatsApp"],status: "Active" },
+                    { event: "BG Expiry (30 days)",    channels: ["Email", "SMS"],            status: "Draft" },
                   ].map((n) => (
                     <div key={n.event} className="flex items-center justify-between py-2.5 border-b border-gray-50 dark:border-navy-800 last:border-0">
                       <div>
                         <p className="text-sm font-medium text-gray-900 dark:text-white">{n.event}</p>
                         <div className="flex gap-1 mt-1">
-                          {n.channels.map((ch) => (
-                            <span key={ch} className="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-navy-800 text-gray-500 rounded">{ch}</span>
-                          ))}
+                          {n.channels.map((ch) => <span key={ch} className="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-navy-800 text-gray-500 rounded">{ch}</span>)}
                         </div>
                       </div>
                       <Badge variant={n.status === "Active" ? "success" : "warning"} size="sm">{n.status}</Badge>
@@ -110,11 +172,9 @@ export default function AdminSettingsPage() {
                 </div>
               </CardContent>
             </Card>
-
           </div>
 
           <div className="space-y-6">
-            {/* Security */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -124,10 +184,10 @@ export default function AdminSettingsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {[
-                  { label: "Force MFA for Banks", on: true },
-                  { label: "Force MFA for Admins", on: true },
-                  { label: "IP Allowlisting", on: false },
-                  { label: "Document Watermarking", on: true },
+                  { label: "Force MFA for Banks",        on: true },
+                  { label: "Force MFA for Admins",       on: true },
+                  { label: "IP Allowlisting",            on: false },
+                  { label: "Document Watermarking",      on: true },
                   { label: "Audit Log Retention (365d)", on: true },
                 ].map((s) => (
                   <div key={s.label} className="flex items-center justify-between py-1">
@@ -140,33 +200,6 @@ export default function AdminSettingsPage() {
               </CardContent>
             </Card>
 
-            {/* API Keys */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Key size={16} className="text-navy-500" />
-                  API Keys
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {[
-                  { name: "Canara Bank", key: "cbk_live_••••••3f1a", created: "Jan 15, 2026" },
-                  { name: "HDFC Bank", key: "hdfc_live_••••••8c2b", created: "Feb 03, 2026" },
-                ].map((k) => (
-                  <div key={k.name} className="p-3 bg-gray-50 dark:bg-navy-800 rounded-xl">
-                    <p className="text-xs font-semibold text-gray-900 dark:text-white">{k.name}</p>
-                    <p className="text-[11px] font-mono text-gray-400 mt-0.5">{k.key}</p>
-                    <div className="flex justify-between items-center mt-1.5">
-                      <p className="text-[10px] text-gray-400">Created {k.created}</p>
-                      <button className="text-[10px] text-red-500 hover:text-red-600 font-medium">Revoke</button>
-                    </div>
-                  </div>
-                ))}
-                <Button size="xs" variant="outline" className="w-full">Generate New Key</Button>
-              </CardContent>
-            </Card>
-
-            {/* System Status */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -176,23 +209,18 @@ export default function AdminSettingsPage() {
               </CardHeader>
               <CardContent className="space-y-2.5">
                 {[
-                  { service: "Firebase Auth", status: "Operational" },
-                  { service: "Firestore DB", status: "Operational" },
-                  { service: "Firebase Storage", status: "Operational" },
-                  { service: "Razorpay Gateway", status: "Operational" },
-                  { service: "Email (SendGrid)", status: "Degraded" },
+                  "Firebase Auth", "Firestore DB", "Firebase Storage", "Razorpay Gateway",
                 ].map((s) => (
-                  <div key={s.service} className="flex items-center justify-between">
-                    <p className="text-xs font-medium text-gray-700 dark:text-gray-200">{s.service}</p>
+                  <div key={s} className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-gray-700 dark:text-gray-200">{s}</p>
                     <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${s.status === "Operational" ? "bg-green-500" : "bg-amber-500"}`} />
-                      <p className={`text-xs font-medium ${s.status === "Operational" ? "text-green-600" : "text-amber-600"}`}>{s.status}</p>
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                      <p className="text-xs font-medium text-green-600">Operational</p>
                     </div>
                   </div>
                 ))}
               </CardContent>
             </Card>
-
           </div>
         </div>
       </div>

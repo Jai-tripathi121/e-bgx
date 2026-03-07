@@ -48,6 +48,7 @@ const adminNav: NavItem[] = [
   { label: "Dashboard",       href: "/admin/dashboard",       icon: <LayoutDashboard size={16} /> },
   { label: "Banks",           href: "/admin/banks",           icon: <Building2 size={16} /> },
   { label: "Applicants",      href: "/admin/applicants",      icon: <User size={16} /> },
+  { label: "Issuance Monitor",href: "/admin/issuance",        icon: <FileText size={16} /> },
   { label: "Settings",        href: "/admin/settings",        icon: <Settings size={16} /> },
 ];
 

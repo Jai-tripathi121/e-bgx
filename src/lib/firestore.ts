@@ -520,3 +520,435 @@ export async function submitBankOffer(data: {
 
   return ref.id;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── MESSAGING ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface BGMessage {
+  id: string;
+  bg_doc_id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: "bank" | "applicant" | "admin";
+  message: string;
+  created_at: string;
+}
+
+function docToBGMessage(d: any): BGMessage {
+  const data = d.data();
+  return {
+    id: d.id,
+    bg_doc_id: data.bg_doc_id || "",
+    sender_id: data.sender_id || "",
+    sender_name: data.sender_name || "",
+    sender_role: data.sender_role || "applicant",
+    message: data.message || "",
+    created_at: toISO(data.created_at),
+  };
+}
+
+export async function sendMessage(
+  bgDocId: string,
+  senderId: string,
+  senderName: string,
+  senderRole: "bank" | "applicant" | "admin",
+  message: string
+): Promise<void> {
+  await addDoc(collection(db, "bg_messages"), {
+    bg_doc_id: bgDocId,
+    sender_id: senderId,
+    sender_name: senderName,
+    sender_role: senderRole,
+    message: message.trim(),
+    created_at: serverTimestamp(),
+  });
+}
+
+export async function getMessages(bgDocId: string): Promise<BGMessage[]> {
+  const q = query(
+    collection(db, "bg_messages"),
+    where("bg_doc_id", "==", bgDocId),
+    orderBy("created_at", "asc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(docToBGMessage);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── DOCUMENTS ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface BGDocRecord {
+  id: string;
+  bg_doc_id: string;
+  uploader_id: string;
+  uploader_name: string;
+  uploader_role: "bank" | "applicant" | "admin";
+  file_name: string;
+  file_url: string;
+  file_size: number;
+  note: string;
+  uploaded_at: string;
+}
+
+function docToBGDocRecord(d: any): BGDocRecord {
+  const data = d.data();
+  return {
+    id: d.id,
+    bg_doc_id: data.bg_doc_id || "",
+    uploader_id: data.uploader_id || "",
+    uploader_name: data.uploader_name || "",
+    uploader_role: data.uploader_role || "applicant",
+    file_name: data.file_name || "",
+    file_url: data.file_url || "",
+    file_size: data.file_size || 0,
+    note: data.note || "",
+    uploaded_at: toISO(data.uploaded_at),
+  };
+}
+
+export async function addDocumentRecord(data: Omit<BGDocRecord, "id">): Promise<string> {
+  const ref = await addDoc(collection(db, "bg_documents"), {
+    ...data,
+    uploaded_at: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function getDocumentRecords(bgDocId: string): Promise<BGDocRecord[]> {
+  const q = query(
+    collection(db, "bg_documents"),
+    where("bg_doc_id", "==", bgDocId),
+    orderBy("uploaded_at", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(docToBGDocRecord);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── FD / BANK PAYMENT REQUESTS ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface BGPaymentRequest {
+  id: string;
+  bg_doc_id: string;
+  bank_id: string;
+  bank_name: string;
+  applicant_id: string;
+  description: string;
+  amount: number;
+  payment_link: string;
+  status: "PENDING" | "RECEIPT_UPLOADED" | "APPROVED" | "REJECTED";
+  receipt_url: string;
+  receipt_note: string;
+  created_at: string;
+  approved_at: string;
+}
+
+function docToBGPaymentRequest(d: any): BGPaymentRequest {
+  const data = d.data();
+  return {
+    id: d.id,
+    bg_doc_id: data.bg_doc_id || "",
+    bank_id: data.bank_id || "",
+    bank_name: data.bank_name || "",
+    applicant_id: data.applicant_id || "",
+    description: data.description || "",
+    amount: data.amount ?? 0,
+    payment_link: data.payment_link || "",
+    status: data.status || "PENDING",
+    receipt_url: data.receipt_url || "",
+    receipt_note: data.receipt_note || "",
+    created_at: toISO(data.created_at),
+    approved_at: toISO(data.approved_at),
+  };
+}
+
+export async function createFDRequest(data: {
+  bg_doc_id: string;
+  bank_id: string;
+  bank_name: string;
+  applicant_id: string;
+  description: string;
+  amount: number;
+  payment_link: string;
+}): Promise<string> {
+  const ref = await addDoc(collection(db, "bg_payment_requests"), {
+    ...data,
+    status: "PENDING",
+    receipt_url: "",
+    receipt_note: "",
+    created_at: serverTimestamp(),
+    approved_at: null,
+  });
+  // Update BG status to FD_REQUESTED
+  await updateDoc(doc(db, "bg_applications", data.bg_doc_id), {
+    status: "FD_REQUESTED" as BGStatus,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `EVT-${Date.now()}`,
+      event_type: "STATUS_CHANGE",
+      description: `FD & fee payment request raised by ${data.bank_name}. Amount: ₹${data.amount.toLocaleString("en-IN")}`,
+      actor: data.bank_name,
+      timestamp: new Date().toISOString(),
+    }),
+  });
+  return ref.id;
+}
+
+export async function getFDRequests(bgDocId: string): Promise<BGPaymentRequest[]> {
+  const q = query(
+    collection(db, "bg_payment_requests"),
+    where("bg_doc_id", "==", bgDocId),
+    orderBy("created_at", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(docToBGPaymentRequest);
+}
+
+export async function uploadFDReceipt(
+  requestId: string,
+  bgDocId: string,
+  applicantId: string,
+  receiptUrl: string,
+  receiptNote: string
+): Promise<void> {
+  await updateDoc(doc(db, "bg_payment_requests", requestId), {
+    status: "RECEIPT_UPLOADED",
+    receipt_url: receiptUrl,
+    receipt_note: receiptNote,
+    updated_at: serverTimestamp(),
+  });
+  // Update BG status to FD_PAID
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    status: "FD_PAID" as BGStatus,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `EVT-${Date.now()}`,
+      event_type: "STATUS_CHANGE",
+      description: "Payment receipt uploaded by applicant. Awaiting bank approval.",
+      actor: "Applicant",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+export async function approveFDRequest(
+  requestId: string,
+  bgDocId: string,
+  bankName: string
+): Promise<void> {
+  const batch = writeBatch(db);
+  batch.update(doc(db, "bg_payment_requests", requestId), {
+    status: "APPROVED",
+    approved_at: serverTimestamp(),
+  });
+  batch.update(doc(db, "bg_applications", bgDocId), {
+    status: "BG_DRAFTING" as BGStatus,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `EVT-${Date.now()}`,
+      event_type: "STATUS_CHANGE",
+      description: `Payment receipt approved by ${bankName}. Bank is now drafting the BG.`,
+      actor: bankName,
+      timestamp: new Date().toISOString(),
+    }),
+  });
+  await batch.commit();
+}
+
+export async function rejectFDRequest(
+  requestId: string,
+  bgDocId: string,
+  bankName: string
+): Promise<void> {
+  await updateDoc(doc(db, "bg_payment_requests", requestId), {
+    status: "REJECTED",
+    updated_at: serverTimestamp(),
+  });
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    status: "FD_REQUESTED" as BGStatus,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `EVT-${Date.now()}`,
+      event_type: "STATUS_CHANGE",
+      description: `Payment receipt rejected by ${bankName}. Applicant must re-upload.`,
+      actor: bankName,
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── PROCESSING FEES (e-BGX) ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ProcessingFeeSetting {
+  amount: number;
+  description: string;
+  payment_link: string;
+  updated_at: string;
+  updated_by: string;
+}
+
+export async function getProcessingFee(): Promise<ProcessingFeeSetting | null> {
+  const snap = await getDoc(doc(db, "settings", "processing_fee"));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    amount: data.amount ?? 0,
+    description: data.description || "Platform processing fee",
+    payment_link: data.payment_link || "",
+    updated_at: toISO(data.updated_at),
+    updated_by: data.updated_by || "",
+  };
+}
+
+export async function setProcessingFee(
+  amount: number,
+  description: string,
+  paymentLink: string,
+  adminId: string
+): Promise<void> {
+  await setDoc(doc(db, "settings", "processing_fee"), {
+    amount,
+    description,
+    payment_link: paymentLink,
+    updated_at: serverTimestamp(),
+    updated_by: adminId,
+  });
+}
+
+export interface ProcessingFeePayment {
+  id: string;
+  bg_doc_id: string;
+  applicant_id: string;
+  applicant_name: string;
+  amount: number;
+  payment_link: string;
+  status: "PENDING" | "RECEIPT_UPLOADED" | "APPROVED";
+  receipt_url: string;
+  receipt_note: string;
+  created_at: string;
+  approved_at: string;
+}
+
+function docToProcessingFeePayment(d: any): ProcessingFeePayment {
+  const data = d.data();
+  return {
+    id: d.id,
+    bg_doc_id: data.bg_doc_id || "",
+    applicant_id: data.applicant_id || "",
+    applicant_name: data.applicant_name || "",
+    amount: data.amount ?? 0,
+    payment_link: data.payment_link || "",
+    status: data.status || "PENDING",
+    receipt_url: data.receipt_url || "",
+    receipt_note: data.receipt_note || "",
+    created_at: toISO(data.created_at),
+    approved_at: toISO(data.approved_at),
+  };
+}
+
+export async function ensureProcessingFeePayment(
+  bgDocId: string,
+  applicantId: string,
+  applicantName: string
+): Promise<ProcessingFeePayment | null> {
+  // Check if one exists
+  const existing = await getDoc(doc(db, "bg_processing_fees", bgDocId));
+  if (existing.exists()) {
+    return docToProcessingFeePayment({ id: existing.id, data: () => existing.data() });
+  }
+  // Get fee setting
+  const feeSetting = await getProcessingFee();
+  if (!feeSetting) return null;
+  // Create new record
+  await setDoc(doc(db, "bg_processing_fees", bgDocId), {
+    bg_doc_id: bgDocId,
+    applicant_id: applicantId,
+    applicant_name: applicantName,
+    amount: feeSetting.amount,
+    payment_link: feeSetting.payment_link,
+    status: "PENDING",
+    receipt_url: "",
+    receipt_note: "",
+    created_at: serverTimestamp(),
+    approved_at: null,
+  });
+  const snap = await getDoc(doc(db, "bg_processing_fees", bgDocId));
+  return docToProcessingFeePayment({ id: snap.id, data: () => snap.data() });
+}
+
+export async function getProcessingFeePayment(
+  bgDocId: string
+): Promise<ProcessingFeePayment | null> {
+  const snap = await getDoc(doc(db, "bg_processing_fees", bgDocId));
+  if (!snap.exists()) return null;
+  return docToProcessingFeePayment({ id: snap.id, data: () => snap.data() });
+}
+
+export async function getAllPendingProcessingFees(): Promise<ProcessingFeePayment[]> {
+  const q = query(
+    collection(db, "bg_processing_fees"),
+    where("status", "in", ["PENDING", "RECEIPT_UPLOADED"])
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(docToProcessingFeePayment);
+}
+
+export async function uploadProcessingFeeReceipt(
+  bgDocId: string,
+  receiptUrl: string,
+  receiptNote: string
+): Promise<void> {
+  await updateDoc(doc(db, "bg_processing_fees", bgDocId), {
+    status: "RECEIPT_UPLOADED",
+    receipt_url: receiptUrl,
+    receipt_note: receiptNote,
+    updated_at: serverTimestamp(),
+  });
+}
+
+export async function approveProcessingFeePayment(
+  bgDocId: string,
+  adminId: string
+): Promise<void> {
+  await updateDoc(doc(db, "bg_processing_fees", bgDocId), {
+    status: "APPROVED",
+    approved_at: serverTimestamp(),
+  });
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    platform_fee_paid: true,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `EVT-${Date.now()}`,
+      event_type: "STATUS_CHANGE",
+      description: "Processing fee payment approved by e-BGX admin.",
+      actor: "Admin",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+// Update getIssuanceBGs to include all post-acceptance statuses
+export async function getIssuanceBGsAll(bankId: string): Promise<FirestoreBG[]> {
+  const q = query(
+    collection(db, "bg_applications"),
+    where("accepted_bank_id", "==", bankId)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => docToFirestoreBG(d.id, d.data()));
+}
+
+export async function getAllIssuanceBGs(): Promise<FirestoreBG[]> {
+  const statuses: BGStatus[] = ["OFFER_ACCEPTED", "FD_REQUESTED", "FD_PAID", "BG_DRAFTING", "ISSUED"];
+  const results: FirestoreBG[] = [];
+  for (const status of statuses) {
+    const q = query(collection(db, "bg_applications"), where("status", "==", status));
+    const snap = await getDocs(q);
+    results.push(...snap.docs.map((d) => docToFirestoreBG(d.id, d.data())));
+  }
+  return results;
+}

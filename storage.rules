@@ -2,7 +2,6 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // ─── Helper functions ───────────────────────────────────────────────────
     function isSignedIn() {
       return request.auth != null;
     }
@@ -22,30 +21,43 @@ service firebase.storage {
     }
 
     // ─── Applicant KYC Documents ────────────────────────────────────────────
-    // Path: /kyc/{userId}/{filename}
     match /kyc/{userId}/{allPaths=**} {
-      allow read: if isSignedIn() && (
-        request.auth.uid == userId || isAdmin()
-      );
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow write: if isSignedIn() &&
         request.auth.uid == userId &&
         isAllowedFileType() &&
         maxFileSizeMB(10);
     }
 
-    // ─── BG Application Documents ───────────────────────────────────────────
-    // Path: /applications/{applicationId}/{filename}
+    // ─── BG Application Documents (bank + applicant upload) ─────────────────
+    // Path: /bg_docs/{bgDocId}/{filename}
+    match /bg_docs/{bgDocId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() &&
+        isAllowedFileType() &&
+        maxFileSizeMB(20);
+    }
+
+    // ─── Payment Receipts (applicant uploads FD / processing fee proof) ─────
+    // Path: /receipts/{bgDocId}/{filename}
+    match /receipts/{bgDocId}/{allPaths=**} {
+      allow read:  if isSignedIn();
+      allow write: if isSignedIn() &&
+        isAllowedFileType() &&
+        maxFileSizeMB(10);
+    }
+
+    // ─── Legacy: BG Application Documents ───────────────────────────────────
     match /applications/{applicationId}/{allPaths=**} {
-      allow read: if isSignedIn();
+      allow read:  if isSignedIn();
       allow write: if isSignedIn() &&
         isAllowedFileType() &&
         maxFileSizeMB(10);
     }
 
     // ─── Issued BG Certificates ─────────────────────────────────────────────
-    // Path: /issued_bgs/{bgId}/{filename}
     match /issued_bgs/{bgId}/{allPaths=**} {
-      allow read: if isSignedIn();
+      allow read:  if isSignedIn();
       allow write: if isSignedIn() &&
         (request.auth.token.role == 'bank' || isAdmin()) &&
         isAllowedFileType() &&
@@ -53,9 +65,8 @@ service firebase.storage {
     }
 
     // ─── Bank Compliance Documents ──────────────────────────────────────────
-    // Path: /bank_docs/{bankId}/{filename}
     match /bank_docs/{bankId}/{allPaths=**} {
-      allow read: if isSignedIn();
+      allow read:  if isSignedIn();
       allow write: if isSignedIn() &&
         (request.auth.uid == bankId || isAdmin()) &&
         isAllowedFileType() &&

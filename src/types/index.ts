@@ -6,6 +6,9 @@ export type BGStatus =
   | "PROCESSING"
   | "IN_PROGRESS"
   | "OFFER_ACCEPTED"
+  | "FD_REQUESTED"      // Bank placed FD/fee payment request
+  | "FD_PAID"           // Applicant uploaded receipt, awaiting bank approval
+  | "BG_DRAFTING"       // Bank approved receipt, drafting BG
   | "PAYMENT_CONFIRMED"
   | "ISSUED"
   | "PAY_FEES"
