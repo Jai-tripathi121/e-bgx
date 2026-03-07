@@ -39,6 +39,7 @@ service cloud.firestore {
     // ─── BG Applications ────────────────────────────────────────────────────
     match /bg_applications/{applicationId} {
       allow read: if isSignedIn() && (
+        resource == null ||
         resource.data.applicant_id == request.auth.uid ||
         isBank() ||
         isAdmin()
@@ -93,15 +94,12 @@ service cloud.firestore {
     }
 
     // ─── BG Payment Requests (FD / Bank Fees) ───────────────────────────────
+    // Read is open to any signed-in user: queries by bg_doc_id need this,
+    // and resource.data.* checks break queries / non-existent docs.
     match /bg_payment_requests/{requestId} {
-      allow read: if isSignedIn() && (
-        resource.data.bank_id == request.auth.uid ||
-        resource.data.applicant_id == request.auth.uid ||
-        isAdmin()
-      );
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && isBank();
       allow update: if isSignedIn() && (
-        // Bank can approve/reject; applicant can upload receipt
         resource.data.bank_id == request.auth.uid ||
         resource.data.applicant_id == request.auth.uid ||
         isAdmin()
@@ -110,12 +108,10 @@ service cloud.firestore {
     }
 
     // ─── Processing Fee Payments (to e-BGX) ─────────────────────────────────
+    // Read is open to any signed-in user: getDoc of non-existent doc sets
+    // resource=null, making resource.data.* throw and deny the read.
     match /bg_processing_fees/{bgDocId} {
-      allow read: if isSignedIn() && (
-        resource.data.applicant_id == request.auth.uid ||
-        isAdmin() ||
-        isBank()
-      );
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && (isApplicant() || isAdmin());
       allow update: if isSignedIn() && (
         resource.data.applicant_id == request.auth.uid ||
