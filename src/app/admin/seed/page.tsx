@@ -43,9 +43,10 @@ export default function SeedPage() {
       const now = new Date();
       const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000);
 
-      function auditEvent(bg_id: string, desc: string, actor: string, ts: Date) {
-        return { event_id: `EVT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, bg_id, event_type: "STATUS_CHANGE", description: desc, actor, timestamp: ts };
-      }
+      const auditEvent = (bg_id: string, desc: string, actor: string, ts: Date) => ({
+        event_id: `EVT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        bg_id, event_type: "STATUS_CHANGE", description: desc, actor, timestamp: ts,
+      });
 
       // ── BG data builder ─────────────────────────────────────────────────────
       interface BGSpec {
