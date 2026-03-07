@@ -2,7 +2,6 @@
 import { useState, useEffect } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { Card, CardContent, CardHeader, CardTitle, KPICard } from "@/components/ui/card";
-import { mockBankAnalytics } from "@/lib/mock-data";
 import { formatINR } from "@/lib/utils";
 import { TrendingUp, FileText, Briefcase, Clock, Award, Users, BarChart3, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,11 +9,13 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
+import { useAuth } from "@/lib/auth-context";
+import { getBankOffers, getIssuanceBGs, BankOffer, FirestoreBG } from "@/lib/firestore";
 
 const TIME_FILTERS = ["1W", "1M", "3M", "6M", "YTD", "1Y"] as const;
 type TimeFilter = (typeof TIME_FILTERS)[number];
 
-const SECTOR_COLORS = ["#1e3a5f", "#2563eb", "#0ea5e9", "#38bdf8", "#7dd3fc", "#bae6fd"];
+const TYPE_COLORS = ["#1e3a5f", "#2563eb", "#0ea5e9", "#38bdf8", "#7dd3fc", "#bae6fd"];
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
@@ -30,30 +31,74 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
+function groupByMonth(offers: BankOffer[]) {
+  const map: Record<string, { count: number; revenue: number }> = {};
+  for (const o of offers) {
+    const d = new Date(o.submitted_at);
+    if (isNaN(d.getTime())) continue;
+    const key = d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
+    if (!map[key]) map[key] = { count: 0, revenue: 0 };
+    map[key].count++;
+    // Estimated commission revenue
+    map[key].revenue += o.bg_amount * (o.commission_rate / 100) * (o.validity_months / 12);
+  }
+  return Object.entries(map)
+    .slice(-8)
+    .map(([month, v]) => ({
+      month,
+      count: v.count,
+      revenue_lakh: +(v.revenue / 100_000).toFixed(1),
+    }));
+}
+
+function groupByType(bgs: FirestoreBG[]) {
+  const map: Record<string, number> = {};
+  for (const bg of bgs) {
+    map[bg.bg_type] = (map[bg.bg_type] ?? 0) + bg.amount_inr;
+  }
+  const total = Object.values(map).reduce((a, b) => a + b, 0) || 1;
+  return Object.entries(map).map(([sector, amount]) => ({
+    sector,
+    amount,
+    percentage: Math.round((amount / total) * 100),
+  }));
+}
+
 export default function BankAnalyticsPage() {
+  const { profile } = useAuth();
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("YTD");
   const [mounted, setMounted] = useState(false);
+  const [offers, setOffers] = useState<BankOffer[]>([]);
+  const [issuedBGs, setIssuedBGs] = useState<FirestoreBG[]>([]);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => setMounted(true), []);
-  const a = mockBankAnalytics;
 
-  // Compute sector percentages from amounts
-  const totalSectorAmount = a.sector_distribution.reduce((sum, s) => sum + s.amount, 0);
-  const sectorsWithPct = a.sector_distribution.map((s) => ({
-    ...s,
-    percentage: Math.round((s.amount / totalSectorAmount) * 100),
-  }));
+  useEffect(() => {
+    if (!profile?.uid) return;
+    Promise.all([getBankOffers(profile.uid), getIssuanceBGs(profile.uid)])
+      .then(([o, bgs]) => { setOffers(o); setIssuedBGs(bgs); })
+      .finally(() => setLoading(false));
+  }, [profile?.uid]);
 
-  // Monthly trend with revenue in Lakhs
-  const monthlyWithLakh = a.monthly_trend.map((m) => ({
-    ...m,
-    revenue_lakh: +(m.revenue / 100000).toFixed(1),
-  }));
+  const acceptedOffers = offers.filter((o) => o.status === "ACCEPTED");
+  const totalRevenue = acceptedOffers.reduce(
+    (s, o) => s + o.bg_amount * (o.commission_rate / 100) * (o.validity_months / 12), 0
+  );
+  const activePortfolio = issuedBGs
+    .filter((b) => b.status !== "EXPIRED")
+    .reduce((s, b) => s + b.amount_inr, 0);
+  const acceptanceRate = offers.length > 0 ? Math.round((acceptedOffers.length / offers.length) * 100) : 0;
+  const avgBGSize = issuedBGs.length > 0 ? Math.round(activePortfolio / issuedBGs.length) : 0;
+
+  const monthlyTrend = groupByMonth(offers);
+  const typeDistribution = groupByType(issuedBGs);
 
   const metrics = [
-    { label: "Offer Acceptance Rate", value: `${a.offer_acceptance_rate}%`, icon: Target, trend: "+3.2%", positive: true },
-    { label: "Avg BG Ticket Size", value: formatINR(a.avg_bg_size, true), icon: Briefcase, trend: "+8.1%", positive: true },
-    { label: "Avg Processing TAT", value: `${a.avg_tat} Days`, icon: Clock, trend: "-1 day", positive: true },
-    { label: "Repeat Customer Rate", value: `${a.repeat_customers}%`, icon: Users, trend: "+5%", positive: true },
+    { label: "Offer Acceptance Rate", value: loading ? "—" : `${acceptanceRate}%`, icon: Target, positive: true },
+    { label: "Avg BG Ticket Size", value: loading ? "—" : formatINR(avgBGSize, true), icon: Briefcase, positive: true },
+    { label: "Total Offers Sent", value: loading ? "—" : String(offers.length), icon: Clock, positive: true },
+    { label: "BGs Won", value: loading ? "—" : String(acceptedOffers.length), icon: Users, positive: true },
   ];
 
   return (
@@ -82,189 +127,186 @@ export default function BankAnalyticsPage() {
         {/* KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KPICard
-            label="Total Revenue"
-            value={formatINR(a.total_revenue, true)}
-            subtext="Commission + Processing Fees"
+            label="Est. Revenue"
+            value={loading ? "—" : formatINR(totalRevenue, true)}
+            subtext="Commission (est.)"
             icon={<TrendingUp size={18} />}
-            trend={{ value: 8.2, label: "vs last period" }}
             variant="navy"
           />
           <KPICard
-            label="BGs Issued"
-            value={a.bgs_issued.toString()}
-            subtext="Successfully issued"
+            label="BGs Accepted"
+            value={loading ? "—" : String(issuedBGs.length)}
+            subtext="In issuance pipeline"
             icon={<FileText size={18} />}
-            trend={{ value: 12, label: "vs last period" }}
           />
           <KPICard
             label="Active Portfolio"
-            value={formatINR(a.active_portfolio, true)}
+            value={loading ? "—" : formatINR(activePortfolio, true)}
             subtext="Live guarantee exposure"
             icon={<Briefcase size={18} />}
-            trend={{ value: 4.5, label: "vs last period" }}
           />
           <KPICard
             label="Acceptance Rate"
-            value={`${a.offer_acceptance_rate}%`}
+            value={loading ? "—" : `${acceptanceRate}%`}
             subtext="Quotes that became BGs"
             icon={<Award size={18} />}
-            trend={{ value: 2.1, label: "vs last period" }}
-            variant="success"
+            variant={acceptanceRate >= 60 ? "success" : "default"}
           />
         </div>
 
         {/* Charts Row 1 */}
-        {mounted && <div className="grid lg:grid-cols-2 gap-4">
-          {/* Monthly BG Volume */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 size={16} className="text-navy-500" />
-                Monthly BG Volume
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={monthlyWithLakh} barSize={28}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={25} />
-                  <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                  <Bar dataKey="count" name="BGs Issued" fill="#1e3a5f" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+        {mounted && monthlyTrend.length > 0 && (
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 size={16} className="text-navy-500" />
+                  Monthly Offer Volume
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={monthlyTrend} barSize={28}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={25} />
+                    <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                    <Bar dataKey="count" name="Offers Sent" fill="#1e3a5f" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
 
-          {/* Revenue Trend */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp size={16} className="text-navy-500" />
-                Revenue Trend (₹ Lakhs)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={monthlyWithLakh}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={35} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Line
-                    type="monotone"
-                    dataKey="revenue_lakh"
-                    name="Revenue (L)"
-                    stroke="#1e3a5f"
-                    strokeWidth={2.5}
-                    dot={{ fill: "#1e3a5f", r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </div>}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp size={16} className="text-navy-500" />
+                  Est. Revenue Trend (₹ Lakhs)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={monthlyTrend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={35} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Line
+                      type="monotone"
+                      dataKey="revenue_lakh"
+                      name="Revenue (L)"
+                      stroke="#1e3a5f"
+                      strokeWidth={2.5}
+                      dot={{ fill: "#1e3a5f", r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Charts Row 2 */}
-        {mounted && <div className="grid lg:grid-cols-3 gap-4">
-          {/* Sector Distribution */}
-          <Card className="lg:col-span-2">
-            <CardHeader><CardTitle>Exposure by Sector</CardTitle></CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-6">
-                <ResponsiveContainer width="45%" height={200}>
-                  <PieChart>
-                    <Pie
-                      data={sectorsWithPct}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={55}
-                      outerRadius={90}
-                      dataKey="percentage"
-                      nameKey="sector"
-                      paddingAngle={3}
-                    >
-                      {sectorsWithPct.map((_, i) => (
-                        <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />
+        {mounted && (
+          <div className="grid lg:grid-cols-3 gap-4">
+            {/* BG Type Distribution */}
+            <Card className="lg:col-span-2">
+              <CardHeader><CardTitle>Portfolio by BG Type</CardTitle></CardHeader>
+              <CardContent>
+                {typeDistribution.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-8 text-center">No accepted BGs yet</p>
+                ) : (
+                  <div className="flex items-center gap-6">
+                    <ResponsiveContainer width="45%" height={200}>
+                      <PieChart>
+                        <Pie
+                          data={typeDistribution}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={55}
+                          outerRadius={90}
+                          dataKey="percentage"
+                          nameKey="sector"
+                          paddingAngle={3}
+                        >
+                          {typeDistribution.map((_, i) => (
+                            <Cell key={i} fill={TYPE_COLORS[i % TYPE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(v: number) => `${v}%`} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex-1 space-y-2">
+                      {typeDistribution.map((s, i) => (
+                        <div key={s.sector} className="flex items-center gap-2.5">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: TYPE_COLORS[i % TYPE_COLORS.length] }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between mb-0.5">
+                              <p className="text-xs font-medium text-gray-700 dark:text-gray-200 truncate">{s.sector}</p>
+                              <p className="text-xs font-semibold text-gray-900 dark:text-white ml-2">{s.percentage}%</p>
+                            </div>
+                            <div className="h-1 bg-gray-100 dark:bg-navy-800 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${s.percentage}%`, backgroundColor: TYPE_COLORS[i % TYPE_COLORS.length] }} />
+                            </div>
+                          </div>
+                        </div>
                       ))}
-                    </Pie>
-                    <Tooltip formatter={(v: number) => `${v}%`} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="flex-1 space-y-2">
-                  {sectorsWithPct.map((s, i) => (
-                    <div key={s.sector} className="flex items-center gap-2.5">
-                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SECTOR_COLORS[i % SECTOR_COLORS.length] }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between mb-0.5">
-                          <p className="text-xs font-medium text-gray-700 dark:text-gray-200 truncate">{s.sector}</p>
-                          <p className="text-xs font-semibold text-gray-900 dark:text-white ml-2">{s.percentage}%</p>
-                        </div>
-                        <div className="h-1 bg-gray-100 dark:bg-navy-800 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full" style={{ width: `${s.percentage}%`, backgroundColor: SECTOR_COLORS[i % SECTOR_COLORS.length] }} />
-                        </div>
-                      </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Key Metrics */}
+            <Card>
+              <CardHeader><CardTitle>Key Metrics</CardTitle></CardHeader>
+              <CardContent className="space-y-1">
+                {metrics.map((m) => (
+                  <div key={m.label} className="flex items-center justify-between py-2.5 border-b border-gray-50 dark:border-navy-800 last:border-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-navy-50 dark:bg-navy-800 flex items-center justify-center">
+                        <m.icon size={13} className="text-navy-600 dark:text-navy-300" />
+                      </div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 leading-tight max-w-[110px]">{m.label}</p>
+                    </div>
+                    <p className="text-sm font-bold text-gray-900 dark:text-white">{m.value}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Top BGs in pipeline */}
+        {issuedBGs.length > 0 && (
+          <Card>
+            <CardHeader><CardTitle>BGs in Issuance Pipeline — {new Date().getFullYear()}</CardTitle></CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {issuedBGs.slice(0, 5).map((bg, i) => (
+                  <div key={bg.id} className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-800 transition-colors">
+                    <div className={cn("w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                      i === 0 ? "bg-amber-100 text-amber-700" :
+                      i === 1 ? "bg-gray-100 text-gray-600" :
+                      "bg-orange-50 text-orange-600"
+                    )}>
+                      {i + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-mono text-xs font-semibold text-navy-700 dark:text-navy-200">#{bg.bg_id}</p>
+                        <span className="text-[10px] bg-navy-50 dark:bg-navy-800 text-navy-600 dark:text-navy-300 px-1.5 py-0.5 rounded">{bg.bg_type}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5 truncate">{bg.applicant_name} → {bg.beneficiary_name}</p>
+                    </div>
+                    <p className="text-sm font-bold text-gray-900 dark:text-white tabular shrink-0">{formatINR(bg.amount_inr, true)}</p>
+                  </div>
+                ))}
               </div>
             </CardContent>
           </Card>
-
-          {/* Key Metrics */}
-          <Card>
-            <CardHeader><CardTitle>Key Metrics</CardTitle></CardHeader>
-            <CardContent className="space-y-1">
-              {metrics.map((m) => (
-                <div key={m.label} className="flex items-center justify-between py-2.5 border-b border-gray-50 dark:border-navy-800 last:border-0">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-navy-50 dark:bg-navy-800 flex items-center justify-center">
-                      <m.icon size={13} className="text-navy-600 dark:text-navy-300" />
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 leading-tight max-w-[110px]">{m.label}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-gray-900 dark:text-white">{m.value}</p>
-                    <p className={cn("text-[10px] font-medium", m.positive ? "text-green-600" : "text-red-500")}>{m.trend}</p>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>}
-
-        {/* Top Issued BGs */}
-        <Card>
-          <CardHeader><CardTitle>Top Issued BGs — {new Date().getFullYear()}</CardTitle></CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {[
-                { rank: 1, bg: "BG-7918", applicant: "POSTMAC VENTURES PVT LTD", beneficiary: "NHAI", amount: 38000000, type: "PERFORMANCE" },
-                { rank: 2, bg: "BG-6935", applicant: "AARAV INFRA LTD", beneficiary: "PWD Maharashtra", amount: 15000000, type: "PERFORMANCE" },
-                { rank: 3, bg: "BG-5512", applicant: "SUNRIZE EXPORTS", beneficiary: "DGFT", amount: 5000000, type: "FINANCIAL" },
-              ].map((row) => (
-                <div key={row.bg} className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-navy-800 transition-colors">
-                  <div className={cn("w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
-                    row.rank === 1 ? "bg-amber-100 text-amber-700" :
-                    row.rank === 2 ? "bg-gray-100 text-gray-600" :
-                    "bg-orange-50 text-orange-600"
-                  )}>
-                    {row.rank}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-mono text-xs font-semibold text-navy-700 dark:text-navy-200">#{row.bg}</p>
-                      <span className="text-[10px] bg-navy-50 dark:bg-navy-800 text-navy-600 dark:text-navy-300 px-1.5 py-0.5 rounded">{row.type}</span>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-0.5 truncate">{row.applicant} → {row.beneficiary}</p>
-                  </div>
-                  <p className="text-sm font-bold text-gray-900 dark:text-white tabular shrink-0">{formatINR(row.amount, true)}</p>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        )}
 
       </div>
     </>

@@ -343,6 +343,16 @@ export interface BankOffer {
   status: "PENDING" | "ACCEPTED" | "REJECTED" | "EXPIRED";
 }
 
+/** Returns BG applications where this bank is the accepted bank (issuance desk) */
+export async function getIssuanceBGs(bankId: string): Promise<FirestoreBG[]> {
+  const q = query(
+    collection(db, "bg_applications"),
+    where("accepted_bank_id", "==", bankId)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => docToFirestoreBG(d.id, d.data()));
+}
+
 /** Returns all BG applications in PROCESSING status (the market feed for banks) */
 export async function getMarketFeed(): Promise<FirestoreBG[]> {
   const q = query(
