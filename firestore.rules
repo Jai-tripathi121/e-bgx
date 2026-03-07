@@ -45,8 +45,10 @@ service cloud.firestore {
         isBank() ||
         isAdmin()
       );
-      allow create: if isSignedIn() && isApplicant() &&
-        request.resource.data.applicant_id == request.auth.uid;
+      allow create: if isSignedIn() && (
+        (isApplicant() && request.resource.data.applicant_id == request.auth.uid) ||
+        isAdmin()
+      );
       allow update: if isSignedIn() && (
         (isApplicant() && resource.data.applicant_id == request.auth.uid &&
           resource.data.status == 'DRAFT') ||
@@ -63,7 +65,7 @@ service cloud.firestore {
         resource.data.bank_id == request.auth.uid ||
         isAdmin()
       );
-      allow create: if isSignedIn() && isBank();
+      allow create: if isSignedIn() && (isBank() || isAdmin());
       allow update: if isSignedIn() && (
         resource.data.bank_id == request.auth.uid || isAdmin()
       );
