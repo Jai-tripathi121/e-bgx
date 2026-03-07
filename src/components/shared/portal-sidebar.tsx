@@ -40,6 +40,7 @@ const bankNav: NavItem[] = [
   { label: "BG Requests",     href: "/bank/requests",         icon: <Inbox size={16} /> },
   { label: "Offer Tracker",   href: "/bank/offers",           icon: <CheckSquare size={16} /> },
   { label: "Issuance Desk",   href: "/bank/issuance",         icon: <FileText size={16} /> },
+  { label: "Payments",        href: "/bank/payments",         icon: <CreditCard size={16} /> },
   { label: "Analytics",       href: "/bank/analytics",        icon: <BarChart3 size={16} /> },
   { label: "Bank Profile",    href: "/bank/profile",          icon: <Building2 size={16} /> },
 ];
@@ -49,6 +50,7 @@ const adminNav: NavItem[] = [
   { label: "Banks",           href: "/admin/banks",           icon: <Building2 size={16} /> },
   { label: "Applicants",      href: "/admin/applicants",      icon: <User size={16} /> },
   { label: "Issuance Monitor",href: "/admin/issuance",        icon: <FileText size={16} /> },
+  { label: "Transactions",    href: "/admin/transactions",    icon: <CreditCard size={16} /> },
   { label: "Settings",        href: "/admin/settings",        icon: <Settings size={16} /> },
 ];
 

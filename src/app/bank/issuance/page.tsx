@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { BGStatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { formatINR, formatDate } from "@/lib/utils";
 import {
   Eye, CheckCircle2, FileText, CreditCard, MessageSquare,
   Download, Upload, Send, X, AlertTriangle, ExternalLink,
-  FilePlus, Clock, CheckSquare,
+  FilePlus, Clock, CheckSquare, FileBadge2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
@@ -17,28 +17,30 @@ import { useAuth } from "@/lib/auth-context";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "@/lib/firebase";
 import {
-  getIssuanceBGsAll, updateBGStatus, FirestoreBG,
-  sendMessage, getMessages, BGMessage,
-  addDocumentRecord, getDocumentRecords, BGDocRecord,
-  createFDRequest, getFDRequests, uploadFDReceipt, approveFDRequest, rejectFDRequest, BGPaymentRequest,
+  subscribeToIssuanceBGs, subscribeToBG, subscribeToMessages,
+  subscribeToFDRequests, subscribeToDocuments,
+  FirestoreBG, BGMessage, BGDocRecord, BGPaymentRequest,
+  sendMessage, addDocumentRecord,
+  createFDRequest, approveFDRequest, rejectFDRequest,
+  uploadBGDraft, uploadFinalBG,
 } from "@/lib/firestore";
 
-const TABS = ["Overview", "Messages", "Documents", "Payments", "History"] as const;
+const TABS = ["Overview", "Draft BG", "Messages", "Documents", "Payments", "History"] as const;
 type Tab = (typeof TABS)[number];
 
 const WORKFLOW_STEPS = [
   { key: "accepted",     label: "Offer Accepted" },
   { key: "fd_requested", label: "FD & Fees Requested" },
   { key: "fd_paid",      label: "Receipt Uploaded" },
-  { key: "drafting",     label: "Drafting BG" },
-  { key: "issued",       label: "BG Issued" },
+  { key: "drafting",     label: "Draft BG Sent" },
+  { key: "issued",       label: "Final BG Issued" },
 ];
 
 function getStepStatus(bg: FirestoreBG, key: string) {
   const map: Record<string, string[]> = {
-    accepted:     ["FD_REQUESTED", "FD_PAID", "BG_DRAFTING", "PAYMENT_CONFIRMED", "ISSUED"],
-    fd_requested: ["FD_PAID", "BG_DRAFTING", "PAYMENT_CONFIRMED", "ISSUED"],
-    fd_paid:      ["BG_DRAFTING", "PAYMENT_CONFIRMED", "ISSUED"],
+    accepted:     ["FD_REQUESTED", "FD_PAID", "BG_DRAFTING", "ISSUED"],
+    fd_requested: ["FD_PAID", "BG_DRAFTING", "ISSUED"],
+    fd_paid:      ["BG_DRAFTING", "ISSUED"],
     drafting:     ["ISSUED"],
     issued:       ["ISSUED"],
   };
@@ -60,23 +62,34 @@ const PAY_STATUS_COLORS: Record<string, string> = {
 
 export default function BankIssuancePage() {
   const { profile } = useAuth();
-  const [bgs, setBgs]           = useState<FirestoreBG[]>([]);
+  const [bgs, setBgs]               = useState<FirestoreBG[]>([]);
   const [loadingBGs, setLoadingBGs] = useState(true);
   const [selectedBG, setSelectedBG] = useState<FirestoreBG | null>(null);
   const [activeTab, setActiveTab]   = useState<Tab>("Overview");
 
   // Messages
-  const [messages, setMessages]   = useState<BGMessage[]>([]);
-  const [msgText, setMsgText]     = useState("");
+  const [messages, setMessages]     = useState<BGMessage[]>([]);
+  const [msgText, setMsgText]       = useState("");
   const [sendingMsg, setSendingMsg] = useState(false);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   // Documents
-  const [docs, setDocs]           = useState<BGDocRecord[]>([]);
-  const [docFile, setDocFile]     = useState<File | null>(null);
-  const [docNote, setDocNote]     = useState("");
+  const [docs, setDocs]             = useState<BGDocRecord[]>([]);
+  const [docFile, setDocFile]       = useState<File | null>(null);
+  const [docNote, setDocNote]       = useState("");
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const docFileRef = useRef<HTMLInputElement>(null);
+
+  // Draft BG
+  const [draftFile, setDraftFile]   = useState<File | null>(null);
+  const [uploadingDraft, setUploadingDraft] = useState(false);
+  const draftFileRef = useRef<HTMLInputElement>(null);
+
+  // Final BG
+  const [finalFile, setFinalFile]   = useState<File | null>(null);
+  const [finalBGNumber, setFinalBGNumber] = useState("");
+  const [uploadingFinal, setUploadingFinal] = useState(false);
+  const finalFileRef = useRef<HTMLInputElement>(null);
 
   // FD Payment Requests
   const [payRequests, setPayRequests] = useState<BGPaymentRequest[]>([]);
@@ -85,49 +98,54 @@ export default function BankIssuancePage() {
   const [submittingFD, setSubmittingFD] = useState(false);
   const [approvingId, setApprovingId]  = useState<string | null>(null);
 
-  // Issue BG
-  const [issuingBG, setIssuingBG] = useState(false);
-
-  const loadBGs = useCallback(async () => {
-    if (!profile?.uid) return;
-    const data = await getIssuanceBGsAll(profile.uid);
-    setBgs(data);
-    if (selectedBG) {
-      const refreshed = data.find((b) => b.id === selectedBG.id);
-      if (refreshed) setSelectedBG(refreshed);
-    }
-  }, [profile?.uid, selectedBG?.id]);
-
+  // ── Real-time: BG list ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!profile?.uid) return;
-    getIssuanceBGsAll(profile.uid)
-      .then(setBgs)
-      .finally(() => setLoadingBGs(false));
+    setLoadingBGs(true);
+    const unsub = subscribeToIssuanceBGs(profile.uid, (data) => {
+      setBgs(data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+      setLoadingBGs(false);
+    });
+    return unsub;
   }, [profile?.uid]);
 
-  const loadTabData = useCallback(async (tab: Tab, bg: FirestoreBG) => {
-    if (tab === "Messages") {
-      const msgs = await getMessages(bg.id);
+  // ── Real-time: selected BG status ──────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id) return;
+    const unsub = subscribeToBG(selectedBG.id, (bg) => {
+      if (bg) setSelectedBG(bg);
+    });
+    return unsub;
+  }, [selectedBG?.id]);
+
+  // ── Real-time: messages ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Messages") return;
+    const unsub = subscribeToMessages(selectedBG.id, (msgs) => {
       setMessages(msgs);
       setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-    }
-    if (tab === "Documents") {
-      setDocs(await getDocumentRecords(bg.id));
-    }
-    if (tab === "Payments") {
-      setPayRequests(await getFDRequests(bg.id));
-    }
-  }, []);
+    });
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Real-time: documents ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || (activeTab !== "Documents" && activeTab !== "Draft BG")) return;
+    const unsub = subscribeToDocuments(selectedBG.id, setDocs);
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Real-time: FD requests ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Payments") return;
+    const unsub = subscribeToFDRequests(selectedBG.id, setPayRequests);
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
 
   const handleSelectBG = (bg: FirestoreBG) => {
     setSelectedBG(bg);
     setActiveTab("Overview");
     setMessages([]); setDocs([]); setPayRequests([]);
-  };
-
-  const handleTabChange = (tab: Tab) => {
-    setActiveTab(tab);
-    if (selectedBG) loadTabData(tab, selectedBG);
   };
 
   // ── Send message ──────────────────────────────────────────────────────────
@@ -137,13 +155,11 @@ export default function BankIssuancePage() {
     try {
       await sendMessage(selectedBG.id, profile.uid, profile.displayName || "Bank", "bank", msgText.trim());
       setMsgText("");
-      setMessages(await getMessages(selectedBG.id));
-      setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch { toast.error("Failed to send message."); }
     finally { setSendingMsg(false); }
   };
 
-  // ── Upload document ───────────────────────────────────────────────────────
+  // ── Upload general document ───────────────────────────────────────────────
   const handleUploadDoc = async () => {
     if (!docFile || !docNote.trim()) { toast.error("File and note are both required."); return; }
     if (!selectedBG || !profile) return;
@@ -161,13 +177,46 @@ export default function BankIssuancePage() {
         file_size: docFile.size,
         note: docNote.trim(),
         uploaded_at: new Date().toISOString(),
+        doc_type: "GENERAL",
       });
       toast.success("Document uploaded.");
       setDocFile(null); setDocNote("");
       if (docFileRef.current) docFileRef.current.value = "";
-      setDocs(await getDocumentRecords(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Upload failed."); }
     finally { setUploadingDoc(false); }
+  };
+
+  // ── Upload Draft BG ───────────────────────────────────────────────────────
+  const handleUploadDraft = async () => {
+    if (!draftFile) { toast.error("Select a draft BG file."); return; }
+    if (!selectedBG || !profile) return;
+    setUploadingDraft(true);
+    try {
+      const path = `bg_docs/${selectedBG.id}/draft_${Date.now()}_${draftFile.name}`;
+      const url  = await uploadFile(draftFile, path);
+      await uploadBGDraft(selectedBG.id, profile.uid, profile.displayName || "Bank", url, draftFile.name);
+      toast.success("Draft BG uploaded. Applicant will now review and approve.");
+      setDraftFile(null);
+      if (draftFileRef.current) draftFileRef.current.value = "";
+    } catch (err: any) { toast.error(err.message || "Upload failed."); }
+    finally { setUploadingDraft(false); }
+  };
+
+  // ── Upload Final BG → ISSUED ──────────────────────────────────────────────
+  const handleUploadFinal = async () => {
+    if (!finalFile) { toast.error("Select the final BG file."); return; }
+    if (!finalBGNumber.trim()) { toast.error("Enter the official BG number."); return; }
+    if (!selectedBG || !profile) return;
+    setUploadingFinal(true);
+    try {
+      const path = `bg_docs/${selectedBG.id}/final_${Date.now()}_${finalFile.name}`;
+      const url  = await uploadFile(finalFile, path);
+      await uploadFinalBG(selectedBG.id, profile.uid, profile.displayName || "Bank", url, finalFile.name, finalBGNumber.trim());
+      toast.success("Final BG issued successfully! 🎉");
+      setFinalFile(null); setFinalBGNumber("");
+      if (finalFileRef.current) finalFileRef.current.value = "";
+    } catch (err: any) { toast.error(err.message || "Failed to issue BG."); }
+    finally { setUploadingFinal(false); }
   };
 
   // ── Create FD request ─────────────────────────────────────────────────────
@@ -190,8 +239,6 @@ export default function BankIssuancePage() {
       toast.success("Payment request sent to applicant.");
       setShowFDModal(false);
       setFdForm({ description: "", amount: "", payment_link: "" });
-      await loadBGs();
-      setPayRequests(await getFDRequests(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Failed to create request."); }
     finally { setSubmittingFD(false); }
   };
@@ -203,8 +250,6 @@ export default function BankIssuancePage() {
     try {
       await approveFDRequest(req.id, selectedBG.id, profile.displayName || "Bank");
       toast.success("Receipt approved. BG moved to Drafting phase.");
-      await loadBGs();
-      setPayRequests(await getFDRequests(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Approval failed."); }
     finally { setApprovingId(null); }
   };
@@ -215,25 +260,14 @@ export default function BankIssuancePage() {
     try {
       await rejectFDRequest(req.id, selectedBG.id, profile.displayName || "Bank");
       toast.success("Receipt rejected. Applicant will re-upload.");
-      setPayRequests(await getFDRequests(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Failed."); }
     finally { setApprovingId(null); }
   };
 
-  // ── Issue BG ──────────────────────────────────────────────────────────────
-  const handleIssueBG = async () => {
-    if (!selectedBG || !profile) return;
-    setIssuingBG(true);
-    try {
-      await updateBGStatus(selectedBG.id, "ISSUED", {
-        official_bg_number: `BG-${selectedBG.bg_id}-ISSUED`,
-        issued_at: new Date().toISOString(),
-      });
-      toast.success("BG issued successfully!");
-      await loadBGs();
-    } catch (err: any) { toast.error(err.message || "Failed to issue BG."); }
-    finally { setIssuingBG(false); }
-  };
+  // ── Draft BG state helpers ────────────────────────────────────────────────
+  const draftBGApproved = (selectedBG as any)?.draft_bg_approved === true;
+  const draftBGDoc      = docs.find((d) => d.doc_type === "DRAFT_BG");
+  const finalBGDoc      = docs.find((d) => d.doc_type === "FINAL_BG");
 
   return (
     <>
@@ -344,12 +378,10 @@ export default function BankIssuancePage() {
                 <button onClick={() => setSelectedBG(null)} className="text-sm text-navy-600 dark:text-navy-300 hover:underline">← Back</button>
                 <span className="font-mono font-semibold text-sm text-gray-700 dark:text-gray-200">#{selectedBG.bg_id}</span>
                 <BGStatusBadge status={selectedBG.status} />
+                {selectedBG.official_bg_number && (
+                  <span className="text-xs text-gray-400 font-mono">· {selectedBG.official_bg_number}</span>
+                )}
               </div>
-              {selectedBG.status === "BG_DRAFTING" && (
-                <Button variant="success" icon={<CheckCircle2 size={14} />} onClick={handleIssueBG} loading={issuingBG}>
-                  Issue Final BG
-                </Button>
-              )}
             </div>
 
             {/* Tabs */}
@@ -357,7 +389,7 @@ export default function BankIssuancePage() {
               {TABS.map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => handleTabChange(tab)}
+                  onClick={() => setActiveTab(tab)}
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all",
                     activeTab === tab
@@ -365,6 +397,7 @@ export default function BankIssuancePage() {
                       : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                   )}
                 >
+                  {tab === "Draft BG"  && <FileBadge2 size={13} />}
                   {tab === "Messages"  && <MessageSquare size={13} />}
                   {tab === "Documents" && <FileText size={13} />}
                   {tab === "Payments"  && <CreditCard size={13} />}
@@ -408,15 +441,20 @@ export default function BankIssuancePage() {
                           Request FD & Fees from Applicant
                         </Button>
                       )}
-                      <Button className="w-full justify-start" variant="ghost" icon={<MessageSquare size={14} />} onClick={() => handleTabChange("Messages")}>
+                      {selectedBG.status === "BG_DRAFTING" && (
+                        <Button className="w-full justify-start" variant="outline" icon={<FileBadge2 size={14} />} onClick={() => setActiveTab("Draft BG")}>
+                          Manage Draft BG
+                        </Button>
+                      )}
+                      <Button className="w-full justify-start" variant="ghost" icon={<MessageSquare size={14} />} onClick={() => setActiveTab("Messages")}>
                         Message Applicant
                       </Button>
-                      <Button className="w-full justify-start" variant="ghost" icon={<FilePlus size={14} />} onClick={() => handleTabChange("Documents")}>
+                      <Button className="w-full justify-start" variant="ghost" icon={<FilePlus size={14} />} onClick={() => setActiveTab("Documents")}>
                         Upload Document
                       </Button>
-                      {selectedBG.status === "BG_DRAFTING" && (
-                        <Button className="w-full justify-start" variant="success" icon={<CheckSquare size={14} />} onClick={handleIssueBG} loading={issuingBG}>
-                          Issue Final BG
+                      {!["FD_REQUESTED", "FD_PAID", "BG_DRAFTING", "ISSUED"].includes(selectedBG.status) && (
+                        <Button className="w-full justify-start" variant="outline" icon={<CreditCard size={14} />} onClick={() => setShowFDModal(true)}>
+                          New Payment Request
                         </Button>
                       )}
                     </CardContent>
@@ -440,6 +478,161 @@ export default function BankIssuancePage() {
                     })}
                   </CardContent>
                 </Card>
+              </div>
+            )}
+
+            {/* ── DRAFT BG ── */}
+            {activeTab === "Draft BG" && (
+              <div className="space-y-4">
+                {selectedBG.status === "ISSUED" ? (
+                  /* Already issued — show final BG */
+                  <Card>
+                    <CardContent className="pt-5">
+                      <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-200 dark:border-green-800">
+                        <CheckCircle2 size={20} className="text-green-600 shrink-0" />
+                        <div className="flex-1">
+                          <p className="font-semibold text-green-700 dark:text-green-400">Bank Guarantee Issued</p>
+                          <p className="text-xs text-green-600 mt-0.5">BG No: {selectedBG.official_bg_number ?? "—"} · Issued {formatDate(selectedBG.issued_at ?? "", "relative")}</p>
+                        </div>
+                        {finalBGDoc && (
+                          <a href={finalBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                            <Button size="xs" variant="outline" icon={<Download size={12} />}>Download Final BG</Button>
+                          </a>
+                        )}
+                      </div>
+                      {draftBGDoc && (
+                        <div className="mt-3 flex items-center gap-3 p-3 bg-gray-50 dark:bg-navy-800 rounded-xl">
+                          <FileText size={14} className="text-gray-400 shrink-0" />
+                          <p className="text-xs text-gray-500 flex-1">Draft BG on file: {draftBGDoc.file_name}</p>
+                          <a href={draftBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                            <Button size="xs" variant="ghost" icon={<Download size={11} />}>Download</Button>
+                          </a>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ) : selectedBG.status !== "BG_DRAFTING" ? (
+                  /* Not in drafting phase yet */
+                  <Card>
+                    <CardContent className="pt-5">
+                      <div className="py-10 text-center">
+                        <FileBadge2 size={32} className="text-gray-300 mx-auto mb-3" />
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Draft BG not available yet</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Complete payment approval first. Current status: <span className="font-semibold">{selectedBG.status}</span>
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  /* BG_DRAFTING — main workflow */
+                  <>
+                    {/* Step 1: Upload Draft BG */}
+                    <Card className={cn(draftBGApproved ? "opacity-60" : "")}>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <span className={cn("w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold", draftBGApproved ? "bg-green-500 text-white" : "bg-navy-900 text-white")}>
+                            {draftBGApproved ? "✓" : "1"}
+                          </span>
+                          Upload Draft BG for Applicant Review
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {draftBGDoc ? (
+                          <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
+                            <FileText size={16} className="text-blue-600 shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-blue-700 dark:text-blue-400 truncate">{draftBGDoc.file_name}</p>
+                              <p className="text-xs text-blue-500">Uploaded {formatDate(draftBGDoc.uploaded_at, "relative")}</p>
+                            </div>
+                            <a href={draftBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                              <Button size="xs" variant="outline" icon={<Download size={12} />}>View</Button>
+                            </a>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-xs text-gray-500">Upload the draft BG PDF. The applicant will review and approve or reject it.</p>
+                            <div>
+                              <input
+                                ref={draftFileRef}
+                                type="file"
+                                accept=".pdf,.jpg,.jpeg,.png"
+                                onChange={(e) => setDraftFile(e.target.files?.[0] || null)}
+                                className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
+                              />
+                              {draftFile && <p className="text-xs text-gray-400 mt-1">{draftFile.name} · {(draftFile.size / 1024).toFixed(0)} KB</p>}
+                            </div>
+                            <Button icon={<Upload size={14} />} onClick={handleUploadDraft} loading={uploadingDraft} disabled={!draftFile}>
+                              Upload Draft BG
+                            </Button>
+                          </>
+                        )}
+                        {draftBGApproved && (
+                          <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
+                            <CheckCircle2 size={16} className="text-green-600" />
+                            <p className="text-sm text-green-700 dark:text-green-400 font-medium">Applicant has approved the draft BG ✓</p>
+                          </div>
+                        )}
+                        {draftBGDoc && !draftBGApproved && (
+                          <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl">
+                            <Clock size={16} className="text-amber-600" />
+                            <p className="text-sm text-amber-700 dark:text-amber-400">Waiting for applicant to approve draft…</p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Step 2: Upload Final BG (only when draft approved) */}
+                    <Card className={cn(!draftBGApproved ? "opacity-40 pointer-events-none" : "")}>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-full bg-navy-900 text-white flex items-center justify-center text-xs font-bold">2</span>
+                          Issue Final Bank Guarantee
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {!draftBGApproved && (
+                          <p className="text-xs text-gray-400">Waiting for applicant to approve the draft BG first.</p>
+                        )}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Official BG Number <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+                            placeholder="e.g. BG/2026/03/00123"
+                            value={finalBGNumber}
+                            onChange={(e) => setFinalBGNumber(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Final BG Document <span className="text-red-500">*</span>
+                            <span className="text-xs font-normal text-gray-400 ml-1">(PDF)</span>
+                          </label>
+                          <input
+                            ref={finalFileRef}
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            onChange={(e) => setFinalFile(e.target.files?.[0] || null)}
+                            className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-green-700 file:text-white hover:file:bg-green-600 cursor-pointer"
+                          />
+                          {finalFile && <p className="text-xs text-gray-400 mt-1">{finalFile.name} · {(finalFile.size / 1024).toFixed(0)} KB</p>}
+                        </div>
+                        <Button
+                          variant="success"
+                          icon={<CheckSquare size={14} />}
+                          onClick={handleUploadFinal}
+                          loading={uploadingFinal}
+                          disabled={!finalFile || !finalBGNumber.trim() || !draftBGApproved}
+                        >
+                          Issue Final BG & Mark ISSUED
+                        </Button>
+                        <p className="text-xs text-gray-400">This will upload the final BG, record the official BG number, and mark the guarantee as ISSUED.</p>
+                      </CardContent>
+                    </Card>
+                  </>
+                )}
               </div>
             )}
 
@@ -494,16 +687,12 @@ export default function BankIssuancePage() {
                       </label>
                       <input
                         className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
-                        placeholder="e.g. Draft BG for review, Final BG certificate, KYC copy…"
+                        placeholder="e.g. KYC copy, Board resolution, Counter-guarantee…"
                         value={docNote}
                         onChange={(e) => setDocNote(e.target.value)}
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Select File <span className="text-red-500">*</span>
-                        <span className="text-xs font-normal text-gray-400 ml-1">(PDF, JPG, PNG — max 20 MB)</span>
-                      </label>
                       <input
                         ref={docFileRef}
                         type="file"
@@ -529,9 +718,13 @@ export default function BankIssuancePage() {
                         {docs.map((d) => (
                           <div key={d.id} className="flex items-start justify-between p-3 rounded-xl border border-gray-100 dark:border-navy-800">
                             <div className="flex items-start gap-3">
-                              <FileText size={16} className="text-navy-400 mt-0.5 shrink-0" />
+                              <FileText size={16} className={cn("mt-0.5 shrink-0", d.doc_type === "DRAFT_BG" ? "text-amber-500" : d.doc_type === "FINAL_BG" ? "text-green-600" : "text-navy-400")} />
                               <div>
-                                <p className="text-sm font-medium text-gray-900 dark:text-white">{d.file_name}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-gray-900 dark:text-white">{d.file_name}</p>
+                                  {d.doc_type === "DRAFT_BG" && <span className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded font-semibold">DRAFT</span>}
+                                  {d.doc_type === "FINAL_BG" && <span className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 rounded font-semibold">FINAL</span>}
+                                </div>
                                 <p className="text-xs text-gray-500 mt-0.5">{d.note}</p>
                                 <p className="text-[10px] text-gray-400 mt-0.5 capitalize">{d.uploader_role} · {formatDate(d.uploaded_at, "relative")}</p>
                               </div>
@@ -598,7 +791,7 @@ export default function BankIssuancePage() {
                             {req.receipt_note && (
                               <p className="text-xs text-gray-500 bg-gray-50 dark:bg-navy-800 rounded-lg p-2">"{req.receipt_note}"</p>
                             )}
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-wrap">
                               <a href={req.receipt_url} target="_blank" rel="noopener noreferrer" className="flex-1">
                                 <Button variant="outline" size="sm" className="w-full" icon={<ExternalLink size={13} />}>View Receipt</Button>
                               </a>
@@ -609,9 +802,16 @@ export default function BankIssuancePage() {
                         )}
 
                         {req.status === "APPROVED" && (
-                          <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
-                            <CheckCircle2 size={16} className="text-green-600" />
-                            <p className="text-sm text-green-700 dark:text-green-400 font-medium">Approved — BG is now in Drafting phase.</p>
+                          <div className="flex items-center justify-between gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 size={16} className="text-green-600" />
+                              <p className="text-sm text-green-700 dark:text-green-400 font-medium">Approved — Payment confirmed.</p>
+                            </div>
+                            {req.receipt_url && (
+                              <a href={req.receipt_url} target="_blank" rel="noopener noreferrer">
+                                <Button size="xs" variant="outline" icon={<Download size={12} />}>Receipt</Button>
+                              </a>
+                            )}
                           </div>
                         )}
 
@@ -636,7 +836,7 @@ export default function BankIssuancePage() {
                   {(selectedBG.audit_trail ?? []).length === 0 ? (
                     <p className="text-sm text-gray-400 py-6 text-center">No audit events yet.</p>
                   ) : (
-                    (selectedBG.audit_trail as any[]).map((ev: any, i: number) => (
+                    (selectedBG.audit_trail as any[]).slice().reverse().map((ev: any, i: number) => (
                       <div key={ev.event_id ?? i} className="flex gap-4 pb-3 mb-3 border-b border-gray-50 dark:border-navy-800 last:border-0 last:mb-0 last:pb-0">
                         <div className="w-6 h-6 rounded-full bg-navy-100 dark:bg-navy-800 flex items-center justify-center shrink-0">
                           <CheckCircle2 size={11} className="text-navy-600 dark:text-navy-300" />

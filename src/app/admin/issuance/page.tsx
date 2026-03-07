@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { BGStatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,20 +8,26 @@ import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell, TableEmp
 import { formatINR, formatDate } from "@/lib/utils";
 import {
   Eye, MessageSquare, FileText, CreditCard, CheckCircle2,
-  Send, Clock, Upload, ExternalLink, AlertTriangle, Download,
+  Send, Clock, Upload, ExternalLink, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/auth-context";
 import {
-  getAllIssuanceBGs, FirestoreBG,
-  sendMessage, getMessages, BGMessage,
-  getDocumentRecords, BGDocRecord,
+  subscribeToAllBGs, subscribeToBG, FirestoreBG,
+  subscribeToMessages, BGMessage,
+  subscribeToDocuments, BGDocRecord,
+  subscribeToProcessingFeePayment, ProcessingFeePayment,
+  sendMessage,
   addDocumentRecord,
-  getProcessingFeePayment, approveProcessingFeePayment, ProcessingFeePayment,
+  approveProcessingFeePayment,
 } from "@/lib/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "@/lib/firebase";
+
+const ISSUANCE_STATUSES = new Set([
+  "OFFER_ACCEPTED", "FD_REQUESTED", "FD_PAID", "BG_DRAFTING", "ISSUED",
+]);
 
 const TABS = ["Overview", "Messages", "Documents", "Processing Fee"] as const;
 type Tab = (typeof TABS)[number];
@@ -59,35 +65,53 @@ export default function AdminIssuancePage() {
   const [procFee, setProcFee]       = useState<ProcessingFeePayment | null>(null);
   const [approvingFee, setApprovingFee] = useState(false);
 
+  // ── Real-time BG list (admin sees all issuance pipeline BGs) ──────────────
   useEffect(() => {
-    getAllIssuanceBGs()
-      .then(setBgs)
-      .finally(() => setLoading(false));
+    setLoading(true);
+    const unsub = subscribeToAllBGs((data) => {
+      setBgs(data.filter((b) => ISSUANCE_STATUSES.has(b.status)));
+      setLoading(false);
+    });
+    return unsub;
   }, []);
 
-  const loadTabData = useCallback(async (tab: Tab, bg: FirestoreBG) => {
-    if (tab === "Messages") {
-      const msgs = await getMessages(bg.id);
+  // ── Real-time selected BG status (auto-refresh when bank or applicant acts) ─
+  useEffect(() => {
+    if (!selectedBG?.id) return;
+    const unsub = subscribeToBG(selectedBG.id, (bg) => {
+      if (bg) setSelectedBG(bg);
+    });
+    return unsub;
+  }, [selectedBG?.id]);
+
+  // ── Messages — only when tab is active ────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Messages") return;
+    const unsub = subscribeToMessages(selectedBG.id, (msgs) => {
       setMessages(msgs);
       setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-    }
-    if (tab === "Documents") {
-      setDocs(await getDocumentRecords(bg.id));
-    }
-    if (tab === "Processing Fee") {
-      setProcFee(await getProcessingFeePayment(bg.id));
-    }
-  }, []);
+    });
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Documents — only when tab is active ────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Documents") return;
+    const unsub = subscribeToDocuments(selectedBG.id, setDocs);
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Processing fee — only when tab is active ──────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Processing Fee") return;
+    const unsub = subscribeToProcessingFeePayment(selectedBG.id, setProcFee);
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
 
   const handleSelect = (bg: FirestoreBG) => {
     setSelectedBG(bg);
     setActiveTab("Overview");
     setMessages([]); setDocs([]); setProcFee(null);
-  };
-
-  const handleTabChange = (tab: Tab) => {
-    setActiveTab(tab);
-    if (selectedBG) loadTabData(tab, selectedBG);
   };
 
   const handleSendMsg = async () => {
@@ -96,8 +120,7 @@ export default function AdminIssuancePage() {
     try {
       await sendMessage(selectedBG.id, profile.uid, "e-BGX Admin", "admin", msgText.trim());
       setMsgText("");
-      setMessages(await getMessages(selectedBG.id));
-      setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+      // Real-time subscription auto-refreshes the message list
     } catch { toast.error("Failed to send."); }
     finally { setSendingMsg(false); }
   };
@@ -123,7 +146,7 @@ export default function AdminIssuancePage() {
       toast.success("Document uploaded.");
       setDocFile(null); setDocNote("");
       if (docFileRef.current) docFileRef.current.value = "";
-      setDocs(await getDocumentRecords(selectedBG.id));
+      // subscribeToDocuments auto-refreshes the list
     } catch (err: any) { toast.error(err.message || "Upload failed."); }
     finally { setUploadingDoc(false); }
   };
@@ -134,7 +157,7 @@ export default function AdminIssuancePage() {
     try {
       await approveProcessingFeePayment(selectedBG.id, profile.uid);
       toast.success("Processing fee approved.");
-      setProcFee(await getProcessingFeePayment(selectedBG.id));
+      // subscribeToProcessingFeePayment auto-refreshes
     } catch (err: any) { toast.error(err.message || "Approval failed."); }
     finally { setApprovingFee(false); }
   };
@@ -190,7 +213,7 @@ export default function AdminIssuancePage() {
               {TABS.map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => handleTabChange(tab)}
+                  onClick={() => setActiveTab(tab)}
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all",
                     activeTab === tab
@@ -202,6 +225,10 @@ export default function AdminIssuancePage() {
                   {tab === "Documents"       && <FileText size={13} />}
                   {tab === "Processing Fee"  && <CreditCard size={13} />}
                   {tab}
+                  {/* Alert dot when fee receipt is uploaded and pending approval */}
+                  {tab === "Processing Fee" && procFee?.status === "RECEIPT_UPLOADED" && (
+                    <span className="w-1.5 h-1.5 bg-blue-500 rounded-full ml-0.5" />
+                  )}
                 </button>
               ))}
             </div>
@@ -347,7 +374,7 @@ export default function AdminIssuancePage() {
                           <p className="text-xs text-gray-400 mt-0.5">Applicant: {procFee.applicant_name}</p>
                         </div>
                         <span className={cn("text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap", FEE_STATUS_COLORS[procFee.status])}>
-                          {procFee.status.replace("_", " ")}
+                          {procFee.status.replace(/_/g, " ")}
                         </span>
                       </div>
 
@@ -362,9 +389,13 @@ export default function AdminIssuancePage() {
                             </p>
                           )}
                           <div className="flex gap-2">
-                            <a href={procFee.receipt_url} target="_blank" rel="noopener noreferrer" className="flex-1">
-                              <Button variant="outline" size="sm" className="w-full" icon={<ExternalLink size={13} />}>View Receipt</Button>
-                            </a>
+                            {procFee.receipt_url && (
+                              <a href={procFee.receipt_url} target="_blank" rel="noopener noreferrer" className="flex-1">
+                                <Button variant="outline" size="sm" className="w-full" icon={<Download size={13} />}>
+                                  Download Receipt
+                                </Button>
+                              </a>
+                            )}
                             <Button
                               variant="success"
                               size="sm"
@@ -387,9 +418,20 @@ export default function AdminIssuancePage() {
                       )}
 
                       {procFee.status === "APPROVED" && (
-                        <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
-                          <CheckCircle2 size={16} className="text-green-600" />
-                          <p className="text-sm text-green-700 dark:text-green-400 font-medium">Processing fee approved on {formatDate(procFee.approved_at, "relative")}.</p>
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
+                            <CheckCircle2 size={16} className="text-green-600" />
+                            <p className="text-sm text-green-700 dark:text-green-400 font-medium">
+                              Processing fee approved on {formatDate(procFee.approved_at, "relative")}.
+                            </p>
+                          </div>
+                          {procFee.receipt_url && (
+                            <a href={procFee.receipt_url} target="_blank" rel="noopener noreferrer">
+                              <Button variant="outline" size="sm" icon={<Download size={13} />}>
+                                Download Receipt
+                              </Button>
+                            </a>
+                          )}
                         </div>
                       )}
                     </div>

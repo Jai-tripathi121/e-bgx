@@ -12,6 +12,8 @@ import {
   serverTimestamp,
   arrayUnion,
   writeBatch,
+  onSnapshot,
+  Unsubscribe,
 } from "firebase/firestore";
 import { db, firebaseConfig } from "./firebase";
 import { BGStatus } from "@/types";
@@ -590,6 +592,7 @@ export interface BGDocRecord {
   file_size: number;
   note: string;
   uploaded_at: string;
+  doc_type?: "DRAFT_BG" | "FINAL_BG" | "GENERAL";
 }
 
 function docToBGDocRecord(d: any): BGDocRecord {
@@ -605,6 +608,7 @@ function docToBGDocRecord(d: any): BGDocRecord {
     file_size: data.file_size || 0,
     note: data.note || "",
     uploaded_at: toISO(data.uploaded_at),
+    doc_type: data.doc_type || "GENERAL",
   };
 }
 
@@ -1166,5 +1170,385 @@ export async function savePlatformConfig(
     ...data,
     updated_at: serverTimestamp(),
     updated_by: adminId,
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── REAL-TIME SUBSCRIPTIONS (onSnapshot) ──────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Subscribe to a single BG document — fires on every change */
+export function subscribeToBG(
+  bgDocId: string,
+  callback: (bg: FirestoreBG | null) => void
+): Unsubscribe {
+  return onSnapshot(doc(db, "bg_applications", bgDocId), (snap) => {
+    if (snap.exists()) {
+      callback(docToFirestoreBG(snap.id, snap.data()));
+    } else {
+      callback(null);
+    }
+  });
+}
+
+/** Subscribe to all BGs accepted by a bank — fires on every change */
+export function subscribeToIssuanceBGs(
+  bankId: string,
+  callback: (bgs: FirestoreBG[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_applications"),
+    where("accepted_bank_id", "==", bankId)
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map((d) => docToFirestoreBG(d.id, d.data())));
+  });
+}
+
+/** Subscribe to all BGs for an applicant — fires on every change */
+export function subscribeToApplicantBGs(
+  applicantId: string,
+  callback: (bgs: FirestoreBG[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_applications"),
+    where("applicant_id", "==", applicantId),
+    orderBy("created_at", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map((d) => docToFirestoreBG(d.id, d.data())));
+  });
+}
+
+/** Subscribe to ALL BG applications (admin) */
+export function subscribeToAllBGs(
+  callback: (bgs: FirestoreBG[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_applications"),
+    orderBy("created_at", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map((d) => docToFirestoreBG(d.id, d.data())));
+  });
+}
+
+/** Subscribe to messages for a BG — sorted ascending */
+export function subscribeToMessages(
+  bgDocId: string,
+  callback: (msgs: BGMessage[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_messages"),
+    where("bg_doc_id", "==", bgDocId),
+    orderBy("created_at", "asc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map(docToBGMessage));
+  });
+}
+
+/** Subscribe to payment requests for a BG */
+export function subscribeToFDRequests(
+  bgDocId: string,
+  callback: (reqs: BGPaymentRequest[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_payment_requests"),
+    where("bg_doc_id", "==", bgDocId),
+    orderBy("created_at", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map(docToBGPaymentRequest));
+  });
+}
+
+/** Subscribe to documents for a BG */
+export function subscribeToDocuments(
+  bgDocId: string,
+  callback: (docs: BGDocRecord[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_documents"),
+    where("bg_doc_id", "==", bgDocId),
+    orderBy("uploaded_at", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map(docToBGDocRecord));
+  });
+}
+
+/** Subscribe to processing fee payment for a BG */
+export function subscribeToProcessingFeePayment(
+  bgDocId: string,
+  callback: (fee: ProcessingFeePayment | null) => void
+): Unsubscribe {
+  return onSnapshot(doc(db, "bg_processing_fees", bgDocId), (snap) => {
+    if (snap.exists()) {
+      callback(docToProcessingFeePayment({ id: snap.id, data: () => snap.data() }));
+    } else {
+      callback(null);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── DRAFT BG + FINAL BG MODULE ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Bank uploads draft BG for applicant review */
+export async function uploadBGDraft(
+  bgDocId: string,
+  bankId: string,
+  bankName: string,
+  draftUrl: string,
+  fileName: string
+): Promise<void> {
+  // Store document record
+  await addDoc(collection(db, "bg_documents"), {
+    bg_doc_id: bgDocId,
+    uploader_id: bankId,
+    uploader_name: bankName,
+    uploader_role: "bank",
+    file_name: fileName,
+    file_url: draftUrl,
+    file_size: 0,
+    note: "Draft BG — Awaiting applicant approval",
+    doc_type: "DRAFT_BG",
+    uploaded_at: serverTimestamp(),
+  });
+  // Update BG doc
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    status: "BG_DRAFTING" as BGStatus,
+    draft_bg_approved: false,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `draft-${Date.now()}`,
+      event_type: "DRAFT_BG_UPLOADED",
+      description: `Draft BG uploaded by ${bankName}. Awaiting applicant review and approval.`,
+      actor: bankName,
+      actor_role: "bank",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+/** Applicant approves the draft BG */
+export async function approveBGDraft(
+  bgDocId: string,
+  applicantName: string
+): Promise<void> {
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    draft_bg_approved: true,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `draft-approved-${Date.now()}`,
+      event_type: "DRAFT_BG_APPROVED",
+      description: "Draft BG approved by applicant. Bank can now issue the final BG.",
+      actor: applicantName,
+      actor_role: "applicant",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+/** Applicant rejects the draft BG with a reason */
+export async function rejectBGDraft(
+  bgDocId: string,
+  applicantName: string,
+  reason: string
+): Promise<void> {
+  await updateDoc(doc(db, "bg_applications", bgDocId), {
+    draft_bg_approved: false,
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `draft-rejected-${Date.now()}`,
+      event_type: "DRAFT_BG_REJECTED",
+      description: `Draft BG rejected by applicant. Reason: ${reason || "No reason provided"}.`,
+      actor: applicantName,
+      actor_role: "applicant",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+}
+
+/** Bank uploads final BG and sets BG to ISSUED */
+export async function uploadFinalBG(
+  bgDocId: string,
+  bankId: string,
+  bankName: string,
+  finalUrl: string,
+  fileName: string,
+  bgNumber: string
+): Promise<void> {
+  const batch = writeBatch(db);
+
+  // Add final BG document record
+  const docRef = doc(collection(db, "bg_documents"));
+  batch.set(docRef, {
+    bg_doc_id: bgDocId,
+    uploader_id: bankId,
+    uploader_name: bankName,
+    uploader_role: "bank",
+    file_name: fileName,
+    file_url: finalUrl,
+    file_size: 0,
+    note: `Final Bank Guarantee. BG No: ${bgNumber}`,
+    doc_type: "FINAL_BG",
+    uploaded_at: serverTimestamp(),
+  });
+
+  // Update BG application to ISSUED
+  batch.update(doc(db, "bg_applications", bgDocId), {
+    status: "ISSUED" as BGStatus,
+    official_bg_number: bgNumber,
+    issued_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+    audit_trail: arrayUnion({
+      event_id: `issued-${Date.now()}`,
+      event_type: "BG_ISSUED",
+      description: `Final Bank Guarantee issued by ${bankName}. BG Number: ${bgNumber}.`,
+      actor: bankName,
+      actor_role: "bank",
+      timestamp: new Date().toISOString(),
+    }),
+  });
+
+  await batch.commit();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── BANK PAYMENTS MODULE ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Get all FD/bank payment requests across all BGs for this bank */
+export async function getBankAllPayments(bankId: string): Promise<BGPaymentRequest[]> {
+  const q = query(
+    collection(db, "bg_payment_requests"),
+    where("bank_id", "==", bankId),
+    orderBy("created_at", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(docToBGPaymentRequest);
+}
+
+/** Real-time subscription to all bank payment requests */
+export function subscribeToBankAllPayments(
+  bankId: string,
+  callback: (payments: BGPaymentRequest[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "bg_payment_requests"),
+    where("bank_id", "==", bankId),
+    orderBy("created_at", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map(docToBGPaymentRequest));
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── ADMIN: ALL PLATFORM TRANSACTIONS ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PlatformTransaction {
+  id: string;
+  bg_doc_id: string;
+  bg_id: string;
+  type: "PLATFORM_FEE" | "FD_DEPOSIT" | "BANK_FEE";
+  applicant_name: string;
+  bank_name: string;
+  description: string;
+  amount: number;
+  status: string;
+  receipt_url: string;
+  created_at: string;
+  approved_at: string;
+}
+
+export async function getAllPlatformTransactions(): Promise<PlatformTransaction[]> {
+  const [pfSnap, fdSnap] = await Promise.all([
+    getDocs(query(collection(db, "bg_processing_fees"), orderBy("created_at", "desc"))),
+    getDocs(query(collection(db, "bg_payment_requests"), orderBy("created_at", "desc"))),
+  ]);
+
+  // Load BG metadata for each doc id
+  const allDocIds = Array.from(new Set([
+    ...pfSnap.docs.map((d) => d.id),
+    ...fdSnap.docs.map((d) => d.data().bg_doc_id as string),
+  ]));
+
+  const bgData: Record<string, { bg_id: string; applicant_name: string; accepted_bank_name: string }> = {};
+  await Promise.all(
+    allDocIds.map(async (docId) => {
+      try {
+        const bgSnap = await getDoc(doc(db, "bg_applications", docId));
+        if (bgSnap.exists()) {
+          const d = bgSnap.data();
+          bgData[docId] = {
+            bg_id: d.bg_id ?? docId,
+            applicant_name: d.applicant_name ?? "",
+            accepted_bank_name: d.accepted_bank_name ?? "",
+          };
+        } else {
+          bgData[docId] = { bg_id: docId, applicant_name: "", accepted_bank_name: "" };
+        }
+      } catch {
+        bgData[docId] = { bg_id: docId, applicant_name: "", accepted_bank_name: "" };
+      }
+    })
+  );
+
+  const platformFees: PlatformTransaction[] = pfSnap.docs.map((d) => {
+    const data = d.data();
+    const bg = bgData[d.id] ?? { bg_id: d.id, applicant_name: data.applicant_name ?? "", accepted_bank_name: "" };
+    return {
+      id: d.id,
+      bg_doc_id: d.id,
+      bg_id: bg.bg_id,
+      type: "PLATFORM_FEE",
+      applicant_name: bg.applicant_name || data.applicant_name || "",
+      bank_name: bg.accepted_bank_name || "",
+      description: "e-BGX Platform Processing Fee",
+      amount: data.amount ?? 0,
+      status: data.status ?? "PENDING",
+      receipt_url: data.receipt_url ?? "",
+      created_at: toISO(data.created_at),
+      approved_at: data.approved_at ? toISO(data.approved_at) : "",
+    };
+  });
+
+  const fdPayments: PlatformTransaction[] = fdSnap.docs.map((d) => {
+    const data = d.data();
+    const bgDocId = data.bg_doc_id as string;
+    const bg = bgData[bgDocId] ?? { bg_id: bgDocId, applicant_name: "", accepted_bank_name: "" };
+    return {
+      id: d.id,
+      bg_doc_id: bgDocId,
+      bg_id: bg.bg_id,
+      type: data.description?.toLowerCase().includes("fd") ? "FD_DEPOSIT" : "BANK_FEE",
+      applicant_name: bg.applicant_name || data.applicant_name || "",
+      bank_name: bg.accepted_bank_name || data.bank_name || "",
+      description: data.description ?? "Bank Payment",
+      amount: data.amount ?? 0,
+      status: data.status ?? "PENDING",
+      receipt_url: data.receipt_url ?? "",
+      created_at: toISO(data.created_at),
+      approved_at: data.approved_at ? toISO(data.approved_at) : "",
+    };
+  });
+
+  return [...platformFees, ...fdPayments].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+}
+
+/** Subscribe to all processing fees (admin real-time) */
+export function subscribeToAllProcessingFees(
+  callback: (fees: ProcessingFeePayment[]) => void
+): Unsubscribe {
+  const q = query(collection(db, "bg_processing_fees"), orderBy("created_at", "desc"));
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map(docToProcessingFeePayment));
   });
 }

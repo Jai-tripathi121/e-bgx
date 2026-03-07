@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { BGStatusBadge } from "@/components/ui/badge";
@@ -10,7 +10,7 @@ import { formatINR, formatDate } from "@/lib/utils";
 import {
   Eye, Download, MessageSquare, FileText, CreditCard,
   CheckCircle2, Send, Upload, ExternalLink, AlertTriangle,
-  Clock, Inbox, Building2, History, FilePlus,
+  Clock, Inbox, Building2, History, FileBadge2, XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast from "react-hot-toast";
@@ -18,15 +18,17 @@ import { useAuth } from "@/lib/auth-context";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage } from "@/lib/firebase";
 import {
-  getApplicantBGs, FirestoreBG,
-  sendMessage, getMessages, BGMessage,
-  addDocumentRecord, getDocumentRecords, BGDocRecord,
-  getFDRequests, uploadFDReceipt, BGPaymentRequest,
-  ensureProcessingFeePayment, getProcessingFeePayment,
-  uploadProcessingFeeReceipt, ProcessingFeePayment,
+  subscribeToApplicantBGs, subscribeToBG,
+  subscribeToMessages, subscribeToDocuments, subscribeToFDRequests,
+  subscribeToProcessingFeePayment,
+  FirestoreBG, BGMessage, BGDocRecord, BGPaymentRequest, ProcessingFeePayment,
+  sendMessage, addDocumentRecord,
+  uploadFDReceipt,
+  ensureProcessingFeePayment, uploadProcessingFeeReceipt,
+  approveBGDraft, rejectBGDraft,
 } from "@/lib/firestore";
 
-const TABS = ["Overview", "Messages", "Documents", "Payments", "History"] as const;
+const TABS = ["Overview", "Draft BG", "Messages", "Documents", "Payments", "History"] as const;
 type Tab = (typeof TABS)[number];
 
 async function uploadFile(file: File, path: string): Promise<string> {
@@ -43,11 +45,11 @@ const PAY_STATUS_COLORS: Record<string, string> = {
 };
 
 const WORKFLOW_STEPS = [
-  { key: "applied",     label: "Applied" },
-  { key: "offer",       label: "Offer Accepted" },
-  { key: "fd",          label: "FD & Fees Paid" },
-  { key: "drafting",    label: "BG Drafting" },
-  { key: "issued",      label: "BG Issued" },
+  { key: "applied",  label: "Applied" },
+  { key: "offer",    label: "Offer Accepted" },
+  { key: "fd",       label: "FD & Fees Paid" },
+  { key: "drafting", label: "Draft BG Review" },
+  { key: "issued",   label: "BG Issued" },
 ];
 
 function getStepStatus(bg: FirestoreBG, key: string) {
@@ -65,83 +67,110 @@ export default function ApplicantIssuancePage() {
   const { user, profile } = useAuth();
   const searchParams = useSearchParams();
   const [applications, setApplications] = useState<FirestoreBG[]>([]);
-  const [loadingData, setLoadingData] = useState(true);
-  const [selectedBG, setSelectedBG]   = useState<FirestoreBG | null>(null);
-  const [activeTab, setActiveTab]     = useState<Tab>("Overview");
+  const [loadingData, setLoadingData]   = useState(true);
+  const [selectedBG, setSelectedBG]     = useState<FirestoreBG | null>(null);
+  const [activeTab, setActiveTab]       = useState<Tab>("Overview");
 
   // Messages
-  const [messages, setMessages]   = useState<BGMessage[]>([]);
-  const [msgText, setMsgText]     = useState("");
-  const [sendingMsg, setSendingMsg] = useState(false);
+  const [messages, setMessages]       = useState<BGMessage[]>([]);
+  const [msgText, setMsgText]         = useState("");
+  const [sendingMsg, setSendingMsg]   = useState(false);
   const msgEndRef = useRef<HTMLDivElement>(null);
 
   // Documents
-  const [docs, setDocs]         = useState<BGDocRecord[]>([]);
-  const [docFile, setDocFile]   = useState<File | null>(null);
-  const [docNote, setDocNote]   = useState("");
+  const [docs, setDocs]               = useState<BGDocRecord[]>([]);
+  const [docFile, setDocFile]         = useState<File | null>(null);
+  const [docNote, setDocNote]         = useState("");
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const docFileRef = useRef<HTMLInputElement>(null);
 
   // FD payment requests from bank
-  const [fdRequests, setFdRequests] = useState<BGPaymentRequest[]>([]);
-  const [receiptFile, setReceiptFile] = useState<{ [reqId: string]: File }>({});
-  const [receiptNote, setReceiptNote] = useState<{ [reqId: string]: string }>({});
+  const [fdRequests, setFdRequests]         = useState<BGPaymentRequest[]>([]);
+  const [receiptFile, setReceiptFile]       = useState<{ [reqId: string]: File }>({});
+  const [receiptNote, setReceiptNote]       = useState<{ [reqId: string]: string }>({});
   const [uploadingReceipt, setUploadingReceipt] = useState<string | null>(null);
 
   // Processing fee (e-BGX)
-  const [procFee, setProcFee] = useState<ProcessingFeePayment | null>(null);
+  const [procFee, setProcFee]         = useState<ProcessingFeePayment | null>(null);
   const [pfReceiptFile, setPfReceiptFile] = useState<File | null>(null);
   const [pfReceiptNote, setPfReceiptNote] = useState("");
   const [uploadingPF, setUploadingPF] = useState(false);
   const pfFileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!user) return;
-    getApplicantBGs(user.uid)
-      .then((bgs) => {
-        setApplications(bgs);
-        // Auto-select BG if ?bg=<bg_id> query param is present (deep link from dashboard)
-        const bgParam = searchParams.get("bg");
-        if (bgParam) {
-          const match = bgs.find((b) => b.bg_id === bgParam || b.id === bgParam);
-          if (match) {
-            setSelectedBG(match);
-            setActiveTab("Overview");
-          }
-        }
-      })
-      .catch(() => setApplications([]))
-      .finally(() => setLoadingData(false));
-  }, [user, searchParams]);
+  // Draft BG review
+  const [draftRejectReason, setDraftRejectReason] = useState("");
+  const [approvingDraft, setApprovingDraft]         = useState(false);
+  const [rejectingDraft, setRejectingDraft]         = useState(false);
+  const [showRejectInput, setShowRejectInput]       = useState(false);
 
-  const loadTabData = useCallback(async (tab: Tab, bg: FirestoreBG) => {
-    if (tab === "Messages") {
-      const msgs = await getMessages(bg.id);
+  // ── Real-time: BG list ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.uid) return;
+    setLoadingData(true);
+    const unsub = subscribeToApplicantBGs(user.uid, (bgs) => {
+      setApplications(bgs);
+      setLoadingData(false);
+      // Auto-select via ?bg= param on first load
+      const bgParam = searchParams.get("bg");
+      if (bgParam && bgs.length > 0) {
+        const match = bgs.find((b) => b.bg_id === bgParam || b.id === bgParam);
+        if (match) {
+          setSelectedBG((prev) => prev?.id === match.id ? prev : match);
+          setActiveTab("Overview");
+        }
+      }
+    });
+    return unsub;
+  }, [user?.uid, searchParams]);
+
+  // ── Real-time: selected BG status ──────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id) return;
+    const unsub = subscribeToBG(selectedBG.id, (bg) => {
+      if (bg) setSelectedBG(bg);
+    });
+    return unsub;
+  }, [selectedBG?.id]);
+
+  // ── Real-time: messages ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Messages") return;
+    const unsub = subscribeToMessages(selectedBG.id, (msgs) => {
       setMessages(msgs);
       setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-    }
-    if (tab === "Documents") {
-      setDocs(await getDocumentRecords(bg.id));
-    }
-    if (tab === "Payments") {
-      const [reqs, pf] = await Promise.all([
-        getFDRequests(bg.id),
-        ensureProcessingFeePayment(bg.id, user!.uid, profile?.displayName || "Applicant"),
-      ]);
-      setFdRequests(reqs);
-      setProcFee(pf);
-    }
-  }, [user, profile?.displayName]);
+    });
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Real-time: documents ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || (activeTab !== "Documents" && activeTab !== "Draft BG")) return;
+    const unsub = subscribeToDocuments(selectedBG.id, setDocs);
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Real-time: FD requests ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Payments") return;
+    const unsub = subscribeToFDRequests(selectedBG.id, setFdRequests);
+    return unsub;
+  }, [selectedBG?.id, activeTab]);
+
+  // ── Real-time: Processing fee ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedBG?.id || activeTab !== "Payments") return;
+    // Ensure the fee record exists, then subscribe
+    ensureProcessingFeePayment(selectedBG.id, user!.uid, profile?.displayName || "Applicant")
+      .then(() => {});
+    const unsub = subscribeToProcessingFeePayment(selectedBG.id, setProcFee);
+    return unsub;
+  }, [selectedBG?.id, activeTab, user?.uid, profile?.displayName]);
 
   const handleSelectBG = (bg: FirestoreBG) => {
     setSelectedBG(bg);
     setActiveTab("Overview");
     setMessages([]); setDocs([]); setFdRequests([]); setProcFee(null);
-  };
-
-  const handleTabChange = (tab: Tab) => {
-    setActiveTab(tab);
-    if (selectedBG) loadTabData(tab, selectedBG);
+    setShowRejectInput(false); setDraftRejectReason("");
   };
 
   // ── Send message ──────────────────────────────────────────────────────────
@@ -151,13 +180,11 @@ export default function ApplicantIssuancePage() {
     try {
       await sendMessage(selectedBG.id, user.uid, profile?.displayName || "Applicant", "applicant", msgText.trim());
       setMsgText("");
-      setMessages(await getMessages(selectedBG.id));
-      setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch { toast.error("Failed to send message."); }
     finally { setSendingMsg(false); }
   };
 
-  // ── Upload document ───────────────────────────────────────────────────────
+  // ── Upload general document ───────────────────────────────────────────────
   const handleUploadDoc = async () => {
     if (!docFile || !docNote.trim()) { toast.error("File and note are both required."); return; }
     if (!selectedBG || !user) return;
@@ -175,11 +202,11 @@ export default function ApplicantIssuancePage() {
         file_size: docFile.size,
         note: docNote.trim(),
         uploaded_at: new Date().toISOString(),
+        doc_type: "GENERAL",
       });
       toast.success("Document uploaded.");
       setDocFile(null); setDocNote("");
       if (docFileRef.current) docFileRef.current.value = "";
-      setDocs(await getDocumentRecords(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Upload failed."); }
     finally { setUploadingDoc(false); }
   };
@@ -198,7 +225,6 @@ export default function ApplicantIssuancePage() {
       toast.success("Receipt uploaded. Awaiting bank approval.");
       setReceiptFile((p) => { const n = { ...p }; delete n[req.id]; return n; });
       setReceiptNote((p) => { const n = { ...p }; delete n[req.id]; return n; });
-      setFdRequests(await getFDRequests(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Upload failed."); }
     finally { setUploadingReceipt(null); }
   };
@@ -215,10 +241,39 @@ export default function ApplicantIssuancePage() {
       toast.success("Processing fee receipt uploaded. Awaiting admin approval.");
       setPfReceiptFile(null); setPfReceiptNote("");
       if (pfFileRef.current) pfFileRef.current.value = "";
-      setProcFee(await getProcessingFeePayment(selectedBG.id));
     } catch (err: any) { toast.error(err.message || "Upload failed."); }
     finally { setUploadingPF(false); }
   };
+
+  // ── Approve Draft BG ──────────────────────────────────────────────────────
+  const handleApproveDraft = async () => {
+    if (!selectedBG || !profile) return;
+    setApprovingDraft(true);
+    try {
+      await approveBGDraft(selectedBG.id, profile.displayName || "Applicant");
+      toast.success("Draft BG approved! Bank will now issue the final BG.");
+    } catch (err: any) { toast.error(err.message || "Failed to approve draft."); }
+    finally { setApprovingDraft(false); }
+  };
+
+  // ── Reject Draft BG ───────────────────────────────────────────────────────
+  const handleRejectDraft = async () => {
+    if (!draftRejectReason.trim()) { toast.error("Please provide a reason for rejection."); return; }
+    if (!selectedBG || !profile) return;
+    setRejectingDraft(true);
+    try {
+      await rejectBGDraft(selectedBG.id, profile.displayName || "Applicant", draftRejectReason.trim());
+      toast.success("Draft BG rejected. Bank will revise and re-upload.");
+      setShowRejectInput(false);
+      setDraftRejectReason("");
+    } catch (err: any) { toast.error(err.message || "Failed to reject draft."); }
+    finally { setRejectingDraft(false); }
+  };
+
+  // ── Draft BG helpers ──────────────────────────────────────────────────────
+  const draftBGDoc      = docs.find((d) => d.doc_type === "DRAFT_BG");
+  const finalBGDoc      = docs.find((d) => d.doc_type === "FINAL_BG");
+  const draftBGApproved = (selectedBG as any)?.draft_bg_approved === true;
 
   if (loadingData) {
     return (
@@ -285,18 +340,45 @@ export default function ApplicantIssuancePage() {
           )
         ) : (
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <button onClick={() => setSelectedBG(null)} className="text-sm text-navy-600 dark:text-navy-300 hover:underline">← Back</button>
               <span className="font-mono font-semibold text-sm text-gray-700 dark:text-gray-200">#{selectedBG.bg_id}</span>
               <BGStatusBadge status={selectedBG.status} />
+              {selectedBG.official_bg_number && (
+                <span className="text-xs text-gray-400 font-mono">· {selectedBG.official_bg_number}</span>
+              )}
             </div>
+
+            {/* Action alert: draft BG review pending */}
+            {selectedBG.status === "BG_DRAFTING" && !draftBGApproved && draftBGDoc && (
+              <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl flex gap-3">
+                <FileBadge2 size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-amber-800 dark:text-amber-300 text-sm">Action Required: Review Draft BG</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">Your bank has uploaded a draft BG for your review. Please review and approve or reject it.</p>
+                  <Button size="xs" className="mt-2" variant="outline" onClick={() => setActiveTab("Draft BG")}>Review Draft BG →</Button>
+                </div>
+              </div>
+            )}
+
+            {/* Action alert: FD payment */}
+            {selectedBG.status === "FD_REQUESTED" && (
+              <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl flex gap-3">
+                <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-amber-800 dark:text-amber-300 text-sm">Action Required: FD & Fees Payment</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">Your bank has requested FD margin and fees. Go to the Payments tab to view details and upload your payment receipt.</p>
+                  <Button size="xs" className="mt-2" variant="outline" onClick={() => setActiveTab("Payments")}>Go to Payments →</Button>
+                </div>
+              </div>
+            )}
 
             {/* Tabs */}
             <div className="flex gap-1 p-1 bg-gray-100 dark:bg-navy-800 rounded-xl overflow-x-auto">
               {TABS.map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => handleTabChange(tab)}
+                  onClick={() => setActiveTab(tab)}
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all",
                     activeTab === tab
@@ -304,12 +386,15 @@ export default function ApplicantIssuancePage() {
                       : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                   )}
                 >
-                  {tab === "Overview"  && <Eye size={13} />}
+                  {tab === "Draft BG"  && <FileBadge2 size={13} />}
                   {tab === "Messages"  && <MessageSquare size={13} />}
                   {tab === "Documents" && <FileText size={13} />}
                   {tab === "Payments"  && <CreditCard size={13} />}
                   {tab === "History"   && <History size={13} />}
                   {tab}
+                  {tab === "Draft BG" && selectedBG.status === "BG_DRAFTING" && !draftBGApproved && draftBGDoc && (
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" />
+                  )}
                 </button>
               ))}
             </div>
@@ -323,14 +408,14 @@ export default function ApplicantIssuancePage() {
                     <CardContent>
                       <div className="grid grid-cols-2 gap-4">
                         {[
-                          ["Beneficiary",    selectedBG.beneficiary_name],
-                          ["Amount",         formatINR(selectedBG.amount_inr)],
-                          ["BG Type",        selectedBG.bg_type],
-                          ["Validity",       `${selectedBG.validity_months} Months`],
-                          ["Tender No.",     selectedBG.tender_number],
-                          ["Issuing Bank",   selectedBG.accepted_bank_name || "—"],
-                          ["Official BG No.",selectedBG.official_bg_number || "—"],
-                          ["Issued At",      selectedBG.issued_at ? formatDate(selectedBG.issued_at) : "—"],
+                          ["Beneficiary",     selectedBG.beneficiary_name],
+                          ["Amount",          formatINR(selectedBG.amount_inr)],
+                          ["BG Type",         selectedBG.bg_type],
+                          ["Validity",        `${selectedBG.validity_months} Months`],
+                          ["Tender No.",      selectedBG.tender_number],
+                          ["Issuing Bank",    selectedBG.accepted_bank_name || "—"],
+                          ["Official BG No.", selectedBG.official_bg_number || "—"],
+                          ["Issued At",       selectedBG.issued_at ? formatDate(selectedBG.issued_at) : "—"],
                         ].map(([k, v]) => (
                           <div key={k} className="border-b border-gray-50 dark:border-navy-800 pb-2.5">
                             <p className="text-xs text-gray-400">{k}</p>
@@ -340,14 +425,18 @@ export default function ApplicantIssuancePage() {
                       </div>
                     </CardContent>
                   </Card>
-                  {selectedBG.status === "FD_REQUESTED" && (
-                    <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl flex gap-3">
-                      <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-semibold text-amber-800 dark:text-amber-300 text-sm">Action Required: FD & Fees Payment</p>
-                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">Your bank has requested FD margin and fees. Go to the Payments tab to view details and upload your payment receipt.</p>
-                        <Button size="xs" className="mt-2" variant="outline" onClick={() => handleTabChange("Payments")}>Go to Payments →</Button>
+
+                  {/* Final BG download (when issued) */}
+                  {selectedBG.status === "ISSUED" && finalBGDoc && (
+                    <div className="flex items-center gap-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-2xl">
+                      <CheckCircle2 size={20} className="text-green-600 shrink-0" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-green-700 dark:text-green-400">Your Bank Guarantee is Issued!</p>
+                        <p className="text-xs text-green-600 mt-0.5">BG No: {selectedBG.official_bg_number}</p>
                       </div>
+                      <a href={finalBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                        <Button size="sm" icon={<Download size={13} />}>Download BG</Button>
+                      </a>
                     </div>
                   )}
                 </div>
@@ -368,6 +457,145 @@ export default function ApplicantIssuancePage() {
                     })}
                   </CardContent>
                 </Card>
+              </div>
+            )}
+
+            {/* ── DRAFT BG ── */}
+            {activeTab === "Draft BG" && (
+              <div className="space-y-4">
+                {selectedBG.status === "ISSUED" ? (
+                  <Card>
+                    <CardContent className="pt-5">
+                      <div className="flex items-center gap-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+                        <CheckCircle2 size={20} className="text-green-600 shrink-0" />
+                        <div className="flex-1">
+                          <p className="font-semibold text-green-700 dark:text-green-400">Bank Guarantee Issued</p>
+                          <p className="text-xs text-green-600 mt-0.5">BG No: {selectedBG.official_bg_number ?? "—"}</p>
+                        </div>
+                        {finalBGDoc && (
+                          <a href={finalBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                            <Button size="sm" icon={<Download size={13} />}>Download Final BG</Button>
+                          </a>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : selectedBG.status !== "BG_DRAFTING" ? (
+                  <Card>
+                    <CardContent className="pt-5">
+                      <div className="py-12 text-center">
+                        <FileBadge2 size={32} className="text-gray-300 mx-auto mb-3" />
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Draft BG not available yet</p>
+                        <p className="text-xs text-gray-400 mt-1">The bank will upload a draft after payment is confirmed.</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : !draftBGDoc ? (
+                  <Card>
+                    <CardContent className="pt-5">
+                      <div className="py-12 text-center">
+                        <Clock size={32} className="text-gray-300 mx-auto mb-3" />
+                        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Waiting for bank to upload draft BG</p>
+                        <p className="text-xs text-gray-400 mt-1">The bank is preparing your draft guarantee. You will see it here once uploaded.</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : draftBGApproved ? (
+                  <Card>
+                    <CardContent className="pt-5 space-y-4">
+                      <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+                        <CheckCircle2 size={20} className="text-green-600 shrink-0" />
+                        <div>
+                          <p className="font-semibold text-green-700 dark:text-green-400">You have approved the draft BG</p>
+                          <p className="text-xs text-green-600 mt-0.5">The bank is now preparing the final BG.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-navy-800 rounded-xl">
+                        <FileText size={15} className="text-gray-400 shrink-0" />
+                        <p className="text-xs text-gray-600 dark:text-gray-300 flex-1 truncate">{draftBGDoc.file_name}</p>
+                        <a href={draftBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                          <Button size="xs" variant="outline" icon={<Download size={12} />}>View Draft</Button>
+                        </a>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  /* Draft uploaded, needs review */
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <FileBadge2 size={16} className="text-amber-500" />
+                        Review Draft Bank Guarantee
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                      <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800">
+                        <p className="text-sm text-amber-800 dark:text-amber-300">
+                          Your bank has uploaded a draft BG. Please review it carefully — check all details, amounts, and dates before approving.
+                        </p>
+                      </div>
+
+                      {/* Draft file */}
+                      <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-navy-800 rounded-xl border border-gray-200 dark:border-navy-700">
+                        <FileBadge2 size={24} className="text-amber-500 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{draftBGDoc.file_name}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">Uploaded by {draftBGDoc.uploader_name} · {formatDate(draftBGDoc.uploaded_at, "relative")}</p>
+                        </div>
+                        <a href={draftBGDoc.file_url} target="_blank" rel="noopener noreferrer">
+                          <Button size="sm" icon={<ExternalLink size={13} />}>Open Draft</Button>
+                        </a>
+                      </div>
+
+                      {/* Approve / Reject actions */}
+                      {!showRejectInput ? (
+                        <div className="flex gap-3">
+                          <Button
+                            variant="success"
+                            className="flex-1"
+                            icon={<CheckCircle2 size={14} />}
+                            onClick={handleApproveDraft}
+                            loading={approvingDraft}
+                          >
+                            Approve Draft BG
+                          </Button>
+                          <Button
+                            variant="danger"
+                            className="flex-1"
+                            icon={<XCircle size={14} />}
+                            onClick={() => setShowRejectInput(true)}
+                          >
+                            Reject Draft
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 p-4 border border-red-200 dark:border-red-800 rounded-xl bg-red-50 dark:bg-red-900/10">
+                          <p className="text-sm font-semibold text-red-700 dark:text-red-400">Rejection Reason</p>
+                          <input
+                            className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-400"
+                            placeholder="e.g. Wrong beneficiary name, incorrect amount…"
+                            value={draftRejectReason}
+                            onChange={(e) => setDraftRejectReason(e.target.value)}
+                          />
+                          <div className="flex gap-3">
+                            <Button
+                              variant="danger"
+                              className="flex-1"
+                              loading={rejectingDraft}
+                              onClick={handleRejectDraft}
+                              disabled={!draftRejectReason.trim()}
+                            >
+                              Confirm Rejection
+                            </Button>
+                            <Button variant="ghost" onClick={() => { setShowRejectInput(false); setDraftRejectReason(""); }}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             )}
 
@@ -418,7 +646,6 @@ export default function ApplicantIssuancePage() {
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         Document Note <span className="text-red-500">*</span>
-                        <span className="text-xs font-normal text-gray-400 ml-1">(describe what you are uploading)</span>
                       </label>
                       <input
                         className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
@@ -427,20 +654,14 @@ export default function ApplicantIssuancePage() {
                         onChange={(e) => setDocNote(e.target.value)}
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Select File <span className="text-red-500">*</span>
-                        <span className="text-xs font-normal text-gray-400 ml-1">(PDF, JPG, PNG — max 20 MB)</span>
-                      </label>
-                      <input
-                        ref={docFileRef}
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png,.docx"
-                        onChange={(e) => setDocFile(e.target.files?.[0] || null)}
-                        className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
-                      />
-                      {docFile && <p className="text-xs text-gray-400 mt-1">{docFile.name} · {(docFile.size / 1024).toFixed(0)} KB</p>}
-                    </div>
+                    <input
+                      ref={docFileRef}
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,.docx"
+                      onChange={(e) => setDocFile(e.target.files?.[0] || null)}
+                      className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
+                    />
+                    {docFile && <p className="text-xs text-gray-400">{docFile.name} · {(docFile.size / 1024).toFixed(0)} KB</p>}
                     <Button icon={<Upload size={14} />} onClick={handleUploadDoc} loading={uploadingDoc} disabled={!docFile || !docNote.trim()}>
                       Upload Document
                     </Button>
@@ -457,9 +678,13 @@ export default function ApplicantIssuancePage() {
                         {docs.map((d) => (
                           <div key={d.id} className="flex items-start justify-between p-3 rounded-xl border border-gray-100 dark:border-navy-800">
                             <div className="flex items-start gap-3">
-                              <FileText size={16} className="text-navy-400 mt-0.5 shrink-0" />
+                              <FileText size={16} className={cn("mt-0.5 shrink-0", d.doc_type === "DRAFT_BG" ? "text-amber-500" : d.doc_type === "FINAL_BG" ? "text-green-600" : "text-navy-400")} />
                               <div>
-                                <p className="text-sm font-medium text-gray-900 dark:text-white">{d.file_name}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-gray-900 dark:text-white">{d.file_name}</p>
+                                  {d.doc_type === "DRAFT_BG" && <span className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 py-0.5 rounded font-semibold">DRAFT</span>}
+                                  {d.doc_type === "FINAL_BG" && <span className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 rounded font-semibold">FINAL BG</span>}
+                                </div>
                                 <p className="text-xs text-gray-500 mt-0.5">{d.note}</p>
                                 <p className="text-[10px] text-gray-400 mt-0.5 capitalize">{d.uploader_role} · {formatDate(d.uploaded_at, "relative")}</p>
                               </div>
@@ -491,7 +716,7 @@ export default function ApplicantIssuancePage() {
                   <CardContent>
                     {!procFee ? (
                       <div className="py-6 text-center text-gray-400 text-sm">
-                        No processing fee configured. Contact e-BGX admin.
+                        Loading fee details…
                       </div>
                     ) : (
                       <div className="space-y-4">
@@ -499,7 +724,6 @@ export default function ApplicantIssuancePage() {
                           <div>
                             <p className="text-sm text-gray-500">Platform Processing Fee</p>
                             <p className="text-2xl font-bold text-navy-700 dark:text-navy-200 mt-0.5">{formatINR(procFee.amount)}</p>
-                            <p className="text-xs text-gray-400 mt-0.5">Pay to e-BGX before BG can be issued</p>
                           </div>
                           <span className={cn("text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap", PAY_STATUS_COLORS[procFee.status])}>
                             {procFee.status.replace("_", " ")}
@@ -514,41 +738,49 @@ export default function ApplicantIssuancePage() {
                           </a>
                         )}
 
-                        {procFee.status === "PENDING" || procFee.status === "RECEIPT_UPLOADED" ? (
-                          procFee.status !== "RECEIPT_UPLOADED" ? (
-                            <div className="space-y-3 border-t border-gray-100 dark:border-navy-800 pt-4">
-                              <p className="text-sm font-semibold text-gray-900 dark:text-white">Upload Payment Receipt</p>
-                              <p className="text-xs text-gray-400">Transfer to e-BGX account / UPI and upload the confirmation screenshot or bank receipt.</p>
-                              <input
-                                type="text"
-                                placeholder="Note (e.g. NEFT from SBI, UTR: 123456789)"
-                                className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
-                                value={pfReceiptNote}
-                                onChange={(e) => setPfReceiptNote(e.target.value)}
-                              />
-                              <input
-                                ref={pfFileRef}
-                                type="file"
-                                accept=".pdf,.jpg,.jpeg,.png"
-                                onChange={(e) => setPfReceiptFile(e.target.files?.[0] || null)}
-                                className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
-                              />
-                              <Button icon={<Upload size={14} />} onClick={handleUploadPFReceipt} loading={uploadingPF} disabled={!pfReceiptFile}>
-                                Upload Processing Fee Receipt
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
-                              <Clock size={16} className="text-blue-600" />
-                              <p className="text-sm text-blue-700 dark:text-blue-400">Receipt submitted. Awaiting admin approval.</p>
-                            </div>
-                          )
-                        ) : procFee.status === "APPROVED" ? (
-                          <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
-                            <CheckCircle2 size={16} className="text-green-600" />
-                            <p className="text-sm text-green-700 dark:text-green-400 font-medium">Processing fee approved by e-BGX.</p>
+                        {procFee.status === "PENDING" && (
+                          <div className="space-y-3 border-t border-gray-100 dark:border-navy-800 pt-4">
+                            <p className="text-sm font-semibold text-gray-900 dark:text-white">Upload Payment Receipt</p>
+                            <input
+                              type="text"
+                              placeholder="Note (e.g. NEFT from SBI, UTR: 123456789)"
+                              className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+                              value={pfReceiptNote}
+                              onChange={(e) => setPfReceiptNote(e.target.value)}
+                            />
+                            <input
+                              ref={pfFileRef}
+                              type="file"
+                              accept=".pdf,.jpg,.jpeg,.png"
+                              onChange={(e) => setPfReceiptFile(e.target.files?.[0] || null)}
+                              className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
+                            />
+                            <Button icon={<Upload size={14} />} onClick={handleUploadPFReceipt} loading={uploadingPF} disabled={!pfReceiptFile}>
+                              Upload Processing Fee Receipt
+                            </Button>
                           </div>
-                        ) : null}
+                        )}
+
+                        {procFee.status === "RECEIPT_UPLOADED" && (
+                          <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+                            <Clock size={16} className="text-blue-600" />
+                            <p className="text-sm text-blue-700 dark:text-blue-400">Receipt submitted. Awaiting admin approval.</p>
+                          </div>
+                        )}
+
+                        {procFee.status === "APPROVED" && (
+                          <div className="flex items-center justify-between gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 size={16} className="text-green-600" />
+                              <p className="text-sm text-green-700 dark:text-green-400 font-medium">Processing fee approved by e-BGX.</p>
+                            </div>
+                            {procFee.receipt_url && (
+                              <a href={procFee.receipt_url} target="_blank" rel="noopener noreferrer">
+                                <Button size="xs" variant="outline" icon={<Download size={12} />}>Receipt</Button>
+                              </a>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -565,7 +797,7 @@ export default function ApplicantIssuancePage() {
                       <CardContent>
                         <div className="py-8 text-center text-gray-400 text-sm">
                           <CreditCard size={24} className="mx-auto mb-2 text-gray-300" />
-                          No FD/fee requests from bank yet. The bank will send a payment request once your offer is accepted.
+                          No FD/fee requests from bank yet.
                         </div>
                       </CardContent>
                     </Card>
@@ -584,7 +816,6 @@ export default function ApplicantIssuancePage() {
                             </span>
                           </div>
 
-                          {/* Payment link */}
                           <div className="p-3 bg-gray-50 dark:bg-navy-800 rounded-xl">
                             <p className="text-[10px] text-gray-400 mb-1 uppercase tracking-wide">Payment Link / Details</p>
                             <p className="text-sm text-gray-700 dark:text-gray-200 break-all">{req.payment_link}</p>
@@ -595,10 +826,17 @@ export default function ApplicantIssuancePage() {
                             )}
                           </div>
 
-                          {/* Upload receipt */}
-                          {req.status === "PENDING" && (
+                          {(req.status === "PENDING" || req.status === "REJECTED") && (
                             <div className="space-y-3 border-t border-gray-100 dark:border-navy-800 pt-4">
-                              <p className="text-sm font-semibold text-gray-900 dark:text-white">Upload Payment Receipt</p>
+                              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                                {req.status === "REJECTED" ? "Re-Upload Payment Receipt" : "Upload Payment Receipt"}
+                              </p>
+                              {req.status === "REJECTED" && (
+                                <div className="flex items-center gap-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">
+                                  <AlertTriangle size={13} className="text-red-600" />
+                                  <p className="text-xs text-red-700 dark:text-red-400">Receipt was rejected. Please re-upload a correct receipt.</p>
+                                </div>
+                              )}
                               <input
                                 type="text"
                                 placeholder="Note (e.g. NEFT from HDFC, UTR: 987654321)"
@@ -615,12 +853,7 @@ export default function ApplicantIssuancePage() {
                                 }}
                                 className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
                               />
-                              <Button
-                                icon={<Upload size={14} />}
-                                onClick={() => handleUploadFDReceipt(req)}
-                                loading={uploadingReceipt === req.id}
-                                disabled={!receiptFile[req.id]}
-                              >
+                              <Button icon={<Upload size={14} />} onClick={() => handleUploadFDReceipt(req)} loading={uploadingReceipt === req.id} disabled={!receiptFile[req.id]}>
                                 Upload Receipt
                               </Button>
                             </div>
@@ -634,39 +867,16 @@ export default function ApplicantIssuancePage() {
                           )}
 
                           {req.status === "APPROVED" && (
-                            <div className="flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
-                              <CheckCircle2 size={16} className="text-green-600" />
-                              <p className="text-sm text-green-700 dark:text-green-400 font-medium">Payment approved. Bank is drafting your BG.</p>
-                            </div>
-                          )}
-
-                          {req.status === "REJECTED" && (
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-xl">
-                                <AlertTriangle size={16} className="text-red-600" />
-                                <p className="text-sm text-red-700 dark:text-red-400">Receipt rejected. Please re-upload.</p>
+                            <div className="flex items-center justify-between gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-xl">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 size={16} className="text-green-600" />
+                                <p className="text-sm text-green-700 dark:text-green-400 font-medium">Payment approved. Bank is drafting your BG.</p>
                               </div>
-                              <div className="space-y-3 pt-2">
-                                <input
-                                  type="text"
-                                  placeholder="Note (re-upload reason / UTR)"
-                                  className="w-full border border-gray-200 dark:border-navy-700 rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-navy-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
-                                  value={receiptNote[req.id] || ""}
-                                  onChange={(e) => setReceiptNote((p) => ({ ...p, [req.id]: e.target.value }))}
-                                />
-                                <input
-                                  type="file"
-                                  accept=".pdf,.jpg,.jpeg,.png"
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    if (f) setReceiptFile((p) => ({ ...p, [req.id]: f }));
-                                  }}
-                                  className="block text-sm text-gray-600 dark:text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-navy-900 file:text-white hover:file:bg-navy-800 cursor-pointer"
-                                />
-                                <Button icon={<Upload size={14} />} onClick={() => handleUploadFDReceipt(req)} loading={uploadingReceipt === req.id} disabled={!receiptFile[req.id]}>
-                                  Re-Upload Receipt
-                                </Button>
-                              </div>
+                              {req.receipt_url && (
+                                <a href={req.receipt_url} target="_blank" rel="noopener noreferrer">
+                                  <Button size="xs" variant="outline" icon={<Download size={12} />}>Receipt</Button>
+                                </a>
+                              )}
                             </div>
                           )}
                         </CardContent>
@@ -685,12 +895,12 @@ export default function ApplicantIssuancePage() {
                   {selectedBG.audit_trail.length === 0 ? (
                     <div className="text-center py-8 text-gray-400 text-sm">No audit trail available.</div>
                   ) : (
-                    (selectedBG.audit_trail as any[]).map((ev: any, i: number) => (
-                      <div key={ev.event_id ?? i} className={cn("flex gap-4 pb-4", i < selectedBG.audit_trail.length - 1 ? "border-l-2 border-gray-100 dark:border-navy-800 ml-3.5" : "")}>
-                        <div className="w-7 h-7 rounded-full bg-navy-100 dark:bg-navy-800 flex items-center justify-center shrink-0 -ml-3.5">
-                          <Clock size={12} className="text-navy-600 dark:text-navy-300" />
+                    (selectedBG.audit_trail as any[]).slice().reverse().map((ev: any, i: number) => (
+                      <div key={ev.event_id ?? i} className="flex gap-4 pb-3 mb-3 border-b border-gray-50 dark:border-navy-800 last:border-0 last:mb-0 last:pb-0">
+                        <div className="w-6 h-6 rounded-full bg-navy-100 dark:bg-navy-800 flex items-center justify-center shrink-0">
+                          <Clock size={11} className="text-navy-600 dark:text-navy-300" />
                         </div>
-                        <div className="flex-1 pt-0.5">
+                        <div className="flex-1">
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-medium text-gray-900 dark:text-white">{ev.description}</p>
                             <p className="text-xs text-gray-400 shrink-0 ml-4">{formatDate(ev.timestamp, "relative")}</p>
