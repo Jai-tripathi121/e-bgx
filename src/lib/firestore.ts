@@ -320,3 +320,111 @@ export async function createApplicantUserByAdmin(data: {
   await signOut(secondaryAuth);
   return uid;
 }
+
+// ── Bank: Market Feed, Offers, Profile ────────────────────────────────────────
+
+export interface BankOffer {
+  id: string;
+  offer_id: string;
+  bg_id: string;
+  bank_id: string;
+  bank_name: string;
+  applicant_id: string;
+  applicant_name: string;
+  bg_amount: number;
+  bg_type: string;
+  validity_months: number;
+  commission_rate: number;
+  fd_margin: number;
+  offer_valid_days: number;
+  conditions?: string;
+  submitted_at: string;
+  valid_till: string;
+  status: "PENDING" | "ACCEPTED" | "REJECTED" | "EXPIRED";
+}
+
+/** Returns all BG applications in PROCESSING status (the market feed for banks) */
+export async function getMarketFeed(): Promise<FirestoreBG[]> {
+  const q = query(
+    collection(db, "bg_applications"),
+    where("status", "==", "PROCESSING")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => docToFirestoreBG(d.id, d.data()));
+}
+
+/** Returns all offers submitted by a specific bank */
+export async function getBankOffers(bankId: string): Promise<BankOffer[]> {
+  const q = query(collection(db, "bg_offers"), where("bank_id", "==", bankId));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      offer_id: data.offer_id || d.id,
+      bg_id: data.bg_id,
+      bank_id: data.bank_id,
+      bank_name: data.bank_name,
+      applicant_id: data.applicant_id,
+      applicant_name: data.applicant_name,
+      bg_amount: data.bg_amount ?? 0,
+      bg_type: data.bg_type || "",
+      validity_months: data.validity_months || 0,
+      commission_rate: data.commission_rate ?? 0,
+      fd_margin: data.fd_margin ?? 0,
+      offer_valid_days: data.offer_valid_days || 30,
+      conditions: data.conditions || "",
+      submitted_at: toISO(data.submitted_at),
+      valid_till: data.valid_till || toISO(null),
+      status: data.status || "PENDING",
+    } as BankOffer;
+  });
+}
+
+/** Submits a new offer from a bank for a BG application */
+export async function submitBankOffer(data: {
+  bg_id: string;
+  bg_doc_id: string;
+  bank_id: string;
+  bank_name: string;
+  applicant_id: string;
+  applicant_name: string;
+  bg_amount: number;
+  bg_type: string;
+  validity_months: number;
+  commission_rate: number;
+  fd_margin: number;
+  offer_valid_days: number;
+  conditions?: string;
+}): Promise<string> {
+  const offer_id = `OFR-${Date.now()}`;
+  const valid_till = new Date(
+    Date.now() + data.offer_valid_days * 86_400_000
+  ).toISOString();
+
+  const ref = await addDoc(collection(db, "bg_offers"), {
+    offer_id,
+    bg_id: data.bg_id,
+    bank_id: data.bank_id,
+    bank_name: data.bank_name,
+    applicant_id: data.applicant_id,
+    applicant_name: data.applicant_name,
+    bg_amount: data.bg_amount,
+    bg_type: data.bg_type,
+    validity_months: data.validity_months,
+    commission_rate: data.commission_rate,
+    fd_margin: data.fd_margin,
+    offer_valid_days: data.offer_valid_days,
+    conditions: data.conditions || "",
+    submitted_at: serverTimestamp(),
+    valid_till,
+    status: "PENDING",
+  });
+
+  // Touch the BG application so applicant sees it's been picked up
+  await updateDoc(doc(db, "bg_applications", data.bg_doc_id), {
+    updated_at: serverTimestamp(),
+  });
+
+  return ref.id;
+}

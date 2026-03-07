@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,25 +7,72 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Building2, User, Shield, Bell, Key, CheckCircle2, Upload, Save } from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
+import { updateUserProfile } from "@/lib/firestore";
 
 const BG_TYPES = ["PERFORMANCE", "FINANCIAL", "ADVANCE_PAYMENT", "BID_BOND", "CUSTOMS", "DEFERRED_PAYMENT"] as const;
 const SECTORS = ["Infrastructure", "Defence", "Energy", "Real Estate", "Manufacturing", "IT & Telecom", "FMCG", "Exports", "Imports"];
 
 export default function BankProfilePage() {
+  const { profile } = useAuth();
   const [saving, setSaving] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(["PERFORMANCE", "FINANCIAL", "ADVANCE_PAYMENT"]);
-  const [selectedSectors, setSelectedSectors] = useState<string[]>(["Infrastructure", "Defence", "Energy"]);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
+
+  // Editable institution fields
+  const [form, setForm] = useState({
+    bankName: "",
+    branchCode: "",
+    branchEmail: "",
+    address: "",
+    officerName: "",
+    officerDesignation: "",
+    officerMobile: "",
+  });
+
+  // Populate form from profile once loaded
+  useEffect(() => {
+    if (!profile) return;
+    setForm({
+      bankName: (profile as any).bankName ?? "",
+      branchCode: (profile as any).branchCode ?? "",
+      branchEmail: (profile as any).branchEmail ?? profile.email ?? "",
+      address: (profile as any).address ?? "",
+      officerName: (profile as any).officerName ?? profile.displayName ?? "",
+      officerDesignation: (profile as any).officerDesignation ?? "",
+      officerMobile: (profile as any).officerMobile ?? profile.mobile ?? "",
+    });
+  }, [profile]);
 
   const handleSave = async () => {
+    if (!profile?.uid) return;
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 1000));
-    toast.success("Profile updated successfully.");
-    setSaving(false);
+    try {
+      await updateUserProfile(profile.uid, {
+        bankName: form.bankName,
+        branchCode: form.branchCode,
+        branchEmail: form.branchEmail,
+        address: form.address,
+        officerName: form.officerName,
+        officerDesignation: form.officerDesignation,
+        officerMobile: form.officerMobile,
+        displayName: form.officerName || form.bankName,
+      });
+      toast.success("Profile updated successfully.");
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to save profile.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleItem = (arr: string[], setArr: (v: string[]) => void, item: string) => {
     setArr(arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]);
   };
+
+  const initials = form.officerName
+    ? form.officerName.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2)
+    : form.bankName?.[0]?.toUpperCase() ?? "B";
 
   return (
     <>
@@ -47,7 +94,9 @@ export default function BankProfilePage() {
             <p className="text-sm font-semibold text-green-800 dark:text-green-300">Verified Bank Partner</p>
             <p className="text-xs text-green-600 dark:text-green-400">Your institution is fully verified and active on e-BGX marketplace.</p>
           </div>
-          <Badge variant="success" className="ml-auto shrink-0">Active</Badge>
+          <Badge variant="success" className="ml-auto shrink-0">
+            {(profile as any)?.bankStatus ?? "Active"}
+          </Badge>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-6">
@@ -63,14 +112,10 @@ export default function BankProfilePage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <Input label="Bank Name" defaultValue="Canara Bank" required />
-                  <Input label="BSR Code" defaultValue="CNRB0001234" />
-                  <Input label="IFSC Code" defaultValue="CNRB0001234" required />
-                  <Input label="Branch Name" defaultValue="Parliament Street, New Delhi" />
-                  <Input label="RBI Registration No." defaultValue="RBI/2024/CB/0012" />
-                  <Input label="BG Desk Email" defaultValue="bg.desk@canarabank.com" type="email" required />
-                  <Input label="BG Desk Phone" defaultValue="+91 11 2374 5678" type="tel" />
-                  <Input label="Head Office Address" defaultValue="112, J.C. Road, Bangalore – 560002" />
+                  <Input label="Bank Name" value={form.bankName} onChange={(e) => setForm(f => ({ ...f, bankName: e.target.value }))} required />
+                  <Input label="Branch Code / IFSC" value={form.branchCode} onChange={(e) => setForm(f => ({ ...f, branchCode: e.target.value }))} />
+                  <Input label="BG Desk Email" value={form.branchEmail} onChange={(e) => setForm(f => ({ ...f, branchEmail: e.target.value }))} type="email" required />
+                  <Input label="Head Office / Branch Address" value={form.address} onChange={(e) => setForm(f => ({ ...f, address: e.target.value }))} />
                 </div>
               </CardContent>
             </Card>
@@ -149,14 +194,13 @@ export default function BankProfilePage() {
               <CardContent className="space-y-4">
                 <div className="flex flex-col items-center gap-3 pb-4 border-b border-gray-50 dark:border-navy-800">
                   <div className="w-16 h-16 rounded-full bg-navy-100 dark:bg-navy-800 flex items-center justify-center text-2xl font-bold text-navy-700 dark:text-navy-200">
-                    J
+                    {initials}
                   </div>
                   <Button size="xs" variant="outline" icon={<Upload size={11} />}>Update Photo</Button>
                 </div>
-                <Input label="Officer Name" defaultValue="Jai – Canara Bank" required />
-                <Input label="Designation" defaultValue="Senior Manager – BG Desk" />
-                <Input label="Employee ID" defaultValue="CNB-2024-0091" />
-                <Input label="Mobile" defaultValue="+91 98765 43210" type="tel" />
+                <Input label="Officer Name" value={form.officerName} onChange={(e) => setForm(f => ({ ...f, officerName: e.target.value }))} required />
+                <Input label="Designation" value={form.officerDesignation} onChange={(e) => setForm(f => ({ ...f, officerDesignation: e.target.value }))} />
+                <Input label="Mobile" value={form.officerMobile} onChange={(e) => setForm(f => ({ ...f, officerMobile: e.target.value }))} type="tel" />
               </CardContent>
             </Card>
 

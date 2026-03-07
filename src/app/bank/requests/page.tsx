@@ -1,31 +1,62 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PortalHeader } from "@/components/shared/portal-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from "@/components/ui/table";
-import { mockMarketFeed } from "@/lib/mock-data";
+import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell, TableEmpty } from "@/components/ui/table";
 import { formatINR, formatDate } from "@/lib/utils";
-import { Search, X, Building2 } from "lucide-react";
-import { BGApplication } from "@/types";
+import { Search, X } from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
+import { getMarketFeed, submitBankOffer, FirestoreBG } from "@/lib/firestore";
 
 export default function BankRequestsPage() {
+  const { profile } = useAuth();
+  const [feed, setFeed] = useState<FirestoreBG[]>([]);
+  const [loadingFeed, setLoadingFeed] = useState(true);
   const [search, setSearch] = useState("");
-  const [quoteModal, setQuoteModal] = useState<BGApplication | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [quoteModal, setQuoteModal] = useState<FirestoreBG | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [offer, setOffer] = useState({ commission: "1.5", fdMargin: "100", validity: "30", conditions: "" });
 
-  const filtered = mockMarketFeed.filter((bg) =>
-    bg.bg_id.includes(search) || bg.applicant_name.toLowerCase().includes(search.toLowerCase()),
+  useEffect(() => {
+    getMarketFeed()
+      .then(setFeed)
+      .finally(() => setLoadingFeed(false));
+  }, []);
+
+  const filtered = feed.filter((bg) =>
+    bg.bg_id.toLowerCase().includes(search.toLowerCase()) ||
+    bg.applicant_name.toLowerCase().includes(search.toLowerCase())
   );
 
   const submitOffer = async () => {
-    setLoading(true);
-    await new Promise((res) => setTimeout(res, 1000));
-    toast.success("Term sheet submitted to applicant's Offers Inbox.");
-    setQuoteModal(null);
-    setLoading(false);
+    if (!profile?.uid || !quoteModal) return;
+    setSubmitting(true);
+    try {
+      await submitBankOffer({
+        bg_id: quoteModal.bg_id,
+        bg_doc_id: quoteModal.id,
+        bank_id: profile.uid,
+        bank_name: profile.bankName ?? profile.displayName,
+        applicant_id: quoteModal.applicant_id,
+        applicant_name: quoteModal.applicant_name,
+        bg_amount: quoteModal.amount_inr,
+        bg_type: quoteModal.bg_type,
+        validity_months: quoteModal.validity_months,
+        commission_rate: parseFloat(offer.commission),
+        fd_margin: parseFloat(offer.fdMargin),
+        offer_valid_days: parseInt(offer.validity),
+        conditions: offer.conditions || undefined,
+      });
+      toast.success("Term sheet submitted to applicant's Offers Inbox.");
+      setQuoteModal(null);
+      setOffer({ commission: "1.5", fdMargin: "100", validity: "30", conditions: "" });
+    } catch (err: any) {
+      toast.error(err.message ?? "Failed to submit offer.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -35,7 +66,12 @@ export default function BankRequestsPage() {
         <div className="flex gap-3">
           <div className="relative flex-1 max-w-sm">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search applicant or reference…" className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search applicant or reference…"
+              className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-navy-500"
+            />
           </div>
         </div>
 
@@ -53,24 +89,28 @@ export default function BankRequestsPage() {
             </tr>
           </TableHead>
           <TableBody>
-            {filtered.map((bg) => (
-              <TableRow key={bg.bg_id}>
-                <TableCell><span className="font-mono font-semibold text-navy-700 dark:text-navy-200">#{bg.bg_id}</span></TableCell>
-                <TableCell>
-                  <div>
+            {loadingFeed ? (
+              <TableEmpty message="Loading market feed…" />
+            ) : filtered.length === 0 ? (
+              <TableEmpty message="No BG requests found" />
+            ) : (
+              filtered.map((bg) => (
+                <TableRow key={bg.id}>
+                  <TableCell><span className="font-mono font-semibold text-navy-700 dark:text-navy-200">#{bg.bg_id}</span></TableCell>
+                  <TableCell>
                     <p className="font-medium text-gray-900 dark:text-white max-w-[160px] truncate">{bg.applicant_name}</p>
-                  </div>
-                </TableCell>
-                <TableCell>{bg.beneficiary_name}</TableCell>
-                <TableCell><span className="font-semibold tabular">{formatINR(bg.amount_inr, true)}</span></TableCell>
-                <TableCell><span className="text-xs bg-navy-50 dark:bg-navy-800 text-navy-700 dark:text-navy-200 px-2 py-0.5 rounded">{bg.bg_type}</span></TableCell>
-                <TableCell>{bg.validity_months}M</TableCell>
-                <TableCell className="text-xs text-gray-400">{formatDate(bg.created_at, "relative")}</TableCell>
-                <TableCell>
-                  <Button size="xs" onClick={() => setQuoteModal(bg)}>Quote</Button>
-                </TableCell>
-              </TableRow>
-            ))}
+                  </TableCell>
+                  <TableCell>{bg.beneficiary_name}</TableCell>
+                  <TableCell><span className="font-semibold tabular">{formatINR(bg.amount_inr, true)}</span></TableCell>
+                  <TableCell><span className="text-xs bg-navy-50 dark:bg-navy-800 text-navy-700 dark:text-navy-200 px-2 py-0.5 rounded">{bg.bg_type}</span></TableCell>
+                  <TableCell>{bg.validity_months}M</TableCell>
+                  <TableCell className="text-xs text-gray-400">{formatDate(bg.created_at, "relative")}</TableCell>
+                  <TableCell>
+                    <Button size="xs" onClick={() => setQuoteModal(bg)}>Quote</Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
 
@@ -100,7 +140,7 @@ export default function BankRequestsPage() {
                   <div className="flex flex-col justify-end">
                     <p className="text-xs font-medium text-gray-500 mb-1">Total Cost (Est.)</p>
                     <p className="text-xl font-bold text-gray-900 dark:text-white">
-                      {formatINR(quoteModal.amount_inr * (parseFloat(offer.commission) / 100) * (quoteModal.validity_months / 12), true)}
+                      {formatINR(quoteModal.amount_inr * (parseFloat(offer.commission || "0") / 100) * (quoteModal.validity_months / 12), true)}
                     </p>
                     <p className="text-xs text-gray-400">Commission only</p>
                   </div>
@@ -119,7 +159,7 @@ export default function BankRequestsPage() {
 
                 <div className="flex gap-3">
                   <Button variant="outline" className="flex-1" onClick={() => setQuoteModal(null)}>Cancel</Button>
-                  <Button className="flex-1" onClick={submitOffer} loading={loading}>Submit Offer</Button>
+                  <Button className="flex-1" onClick={submitOffer} loading={submitting}>Submit Offer</Button>
                 </div>
               </div>
             </div>
