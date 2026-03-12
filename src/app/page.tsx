@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, CheckCircle2, Shield, Zap, BarChart3, Building2, FileText, Clock, Globe, ChevronRight } from "lucide-react";
 
 export default function LandingPage() {
@@ -60,9 +61,8 @@ export default function LandingPage() {
       {/* Navigation */}
       <nav className="fixed top-0 inset-x-0 z-50 bg-white/90 dark:bg-navy-950/90 backdrop-blur-md border-b border-gray-100 dark:border-navy-800">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span className="text-2xl font-bold text-navy-900 dark:text-white">e-BG</span>
-            <span className="text-2xl font-bold bg-gradient-to-br from-silver-400 to-white bg-clip-text text-transparent">X</span>
+          <div className="flex items-center">
+            <Image src="/logo.png" alt="e-BGX" width={100} height={34} className="object-contain invert dark:invert-0" priority />
           </div>
           <div className="hidden md:flex items-center gap-8">
             {["Platform", "For Banks", "For Applicants", "Pricing"].map((item) => (
@@ -303,9 +303,8 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
             <div>
-              <div className="flex items-center gap-1 mb-1">
-                <span className="text-xl font-bold text-white">e-BG</span>
-                <span className="text-xl font-bold text-silver-400">X</span>
+              <div className="mb-1">
+                <Image src="/logo.png" alt="e-BGX" width={88} height={30} className="object-contain" />
               </div>
               <p className="text-xs text-navy-400">Electronic Bank Guarantee Exchange</p>
             </div>
