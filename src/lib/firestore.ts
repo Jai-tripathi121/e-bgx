@@ -1552,3 +1552,215 @@ export function subscribeToAllProcessingFees(
     callback(snap.docs.map(docToProcessingFeePayment));
   });
 }
+
+// ── User Document Vault ───────────────────────────────────────────────────────
+
+export type UserDocCategory = "COMPANY" | "KYC" | "FINANCIAL" | "BG_DOWNLOADED" | "OTHERS";
+
+export interface UserDocument {
+  id: string;
+  uid: string;
+  category: UserDocCategory;
+  label: string;
+  url: string;
+  file_name: string;
+  file_size?: number;
+  uploaded_at: string;
+  status: "ACTIVE" | "ARCHIVED";
+  bg_id?: string;
+  bg_number?: string;
+  notes?: string;
+}
+
+function docToUserDocument(id: string, data: any): UserDocument {
+  return {
+    id,
+    uid: data.uid,
+    category: data.category ?? "OTHERS",
+    label: data.label ?? "",
+    url: data.url ?? "",
+    file_name: data.file_name ?? "",
+    file_size: data.file_size,
+    uploaded_at: toISO(data.uploaded_at),
+    status: data.status ?? "ACTIVE",
+    bg_id: data.bg_id,
+    bg_number: data.bg_number,
+    notes: data.notes,
+  };
+}
+
+export async function uploadUserDocument(
+  uid: string,
+  data: Omit<UserDocument, "id" | "uid" | "uploaded_at">
+): Promise<string> {
+  const ref = await addDoc(collection(db, "user_documents"), {
+    ...data,
+    uid,
+    status: data.status ?? "ACTIVE",
+    uploaded_at: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function getUserDocuments(uid: string): Promise<UserDocument[]> {
+  const q = query(
+    collection(db, "user_documents"),
+    where("uid", "==", uid),
+    where("status", "==", "ACTIVE"),
+    orderBy("uploaded_at", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => docToUserDocument(d.id, d.data()));
+}
+
+export async function deleteUserDocument(docId: string): Promise<void> {
+  await updateDoc(doc(db, "user_documents", docId), { status: "ARCHIVED" });
+}
+
+export function subscribeToUserDocuments(
+  uid: string,
+  callback: (docs: UserDocument[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "user_documents"),
+    where("uid", "==", uid),
+    where("status", "==", "ACTIVE"),
+    orderBy("uploaded_at", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map((d) => docToUserDocument(d.id, d.data())));
+  });
+}
+
+/** Get all BG documents (FINAL_BG / DRAFT_BG) for an applicant across all their BGs */
+export async function getBGDocumentsForApplicant(applicantId: string): Promise<(BGDocRecord & { bg_id: string })[]> {
+  const bgs = await getApplicantBGs(applicantId);
+  if (bgs.length === 0) return [];
+  const results: (BGDocRecord & { bg_id: string })[] = [];
+  await Promise.all(
+    bgs.map(async (bg) => {
+      const docs = await getDocumentRecords(bg.id);
+      docs.forEach((d) => results.push({ ...d, bg_id: bg.id }));
+    })
+  );
+  return results.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
+}
+
+/** Get all BG documents for accepted applications of a bank */
+export async function getBGDocumentsForBank(bankId: string): Promise<(BGDocRecord & { bg_id: string; bg_number?: string; applicant_name?: string })[]> {
+  const bgs = await getIssuanceBGs(bankId);
+  if (bgs.length === 0) return [];
+  const results: (BGDocRecord & { bg_id: string; bg_number?: string; applicant_name?: string })[] = [];
+  await Promise.all(
+    bgs.map(async (bg) => {
+      const docs = await getDocumentRecords(bg.id);
+      docs.forEach((d) =>
+        results.push({
+          ...d,
+          bg_id: bg.id,
+          bg_number: bg.official_bg_number ?? bg.bg_id,
+          applicant_name: bg.applicant_name,
+        })
+      );
+    })
+  );
+  return results.sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime());
+}
+
+// ── Financial Report Engine ───────────────────────────────────────────────────
+
+export interface MonthlyVolume {
+  month: string;
+  count: number;
+  amount: number;
+}
+
+export interface FinancialReportData {
+  generatedAt: string;
+  totalBGsApplied: number;
+  totalBGsIssued: number;
+  totalBGsActive: number;
+  totalBGsPending: number;
+  totalExposureINR: number;
+  totalFeesPaidINR: number;
+  totalFDCreatedINR: number;
+  avgBGAmountINR: number;
+  bgsByStatus: Record<string, number>;
+  bgsByType: Record<string, number>;
+  recentTransactions: ApplicantPaymentRecord[];
+  monthlyVolume: MonthlyVolume[];
+  topBeneficiaries: { name: string; count: number; total: number }[];
+  successRate: number;
+}
+
+export async function generateApplicantFinancialReport(
+  applicantId: string
+): Promise<FinancialReportData> {
+  const [bgs, payments] = await Promise.all([
+    getApplicantBGs(applicantId),
+    getApplicantAllPayments(applicantId),
+  ]);
+
+  const issuedBGs = bgs.filter((b) => b.status === "ISSUED");
+  const activeBGs = bgs.filter((b) => ["BG_DRAFTING", "ISSUED", "FD_PAID", "FD_REQUESTED", "OFFER_ACCEPTED"].includes(b.status));
+  const pendingBGs = bgs.filter((b) => ["PROCESSING", "PAY_FEES", "PAYMENT_REQUESTED"].includes(b.status));
+
+  const totalExposureINR = activeBGs.reduce((s, b) => s + b.amount_inr, 0);
+  const totalFeesPaidINR = payments
+    .filter((p) => ["PLATFORM_FEE", "BG_PROCESSING_FEE"].includes(p.type) && p.status === "VERIFIED")
+    .reduce((s, p) => s + p.amount, 0);
+  const totalFDCreatedINR = payments
+    .filter((p) => p.type === "FD_DEPOSIT" && p.status === "VERIFIED")
+    .reduce((s, p) => s + p.amount, 0);
+
+  const bgsByStatus: Record<string, number> = {};
+  bgs.forEach((b) => { bgsByStatus[b.status] = (bgsByStatus[b.status] || 0) + 1; });
+
+  const bgsByType: Record<string, number> = {};
+  bgs.forEach((b) => { bgsByType[b.bg_type] = (bgsByType[b.bg_type] || 0) + 1; });
+
+  const monthlyMap: Record<string, { count: number; amount: number }> = {};
+  bgs.forEach((b) => {
+    const m = new Date(b.created_at).toISOString().slice(0, 7);
+    if (!monthlyMap[m]) monthlyMap[m] = { count: 0, amount: 0 };
+    monthlyMap[m].count++;
+    monthlyMap[m].amount += b.amount_inr;
+  });
+  const monthlyVolume = Object.entries(monthlyMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([month, data]) => ({ month, ...data }));
+
+  const benMap: Record<string, { count: number; total: number }> = {};
+  bgs.forEach((b) => {
+    const k = b.beneficiary_name || "Unknown";
+    if (!benMap[k]) benMap[k] = { count: 0, total: 0 };
+    benMap[k].count++;
+    benMap[k].total += b.amount_inr;
+  });
+  const topBeneficiaries = Object.entries(benMap)
+    .sort(([, a], [, b]) => b.total - a.total)
+    .slice(0, 5)
+    .map(([name, d]) => ({ name, ...d }));
+
+  const avgBGAmountINR = bgs.length > 0 ? bgs.reduce((s, b) => s + b.amount_inr, 0) / bgs.length : 0;
+  const successRate = bgs.length > 0 ? Math.round((issuedBGs.length / bgs.length) * 100) : 0;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totalBGsApplied: bgs.length,
+    totalBGsIssued: issuedBGs.length,
+    totalBGsActive: activeBGs.length,
+    totalBGsPending: pendingBGs.length,
+    totalExposureINR,
+    totalFeesPaidINR,
+    totalFDCreatedINR,
+    avgBGAmountINR,
+    bgsByStatus,
+    bgsByType,
+    recentTransactions: payments.slice(0, 20),
+    monthlyVolume,
+    topBeneficiaries,
+    successRate,
+  };
+}

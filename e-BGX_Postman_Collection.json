@@ -1,0 +1,911 @@
+{
+  "info": {
+    "name": "e-BGX Platform API",
+    "description": "# e-BGX — Bank Guarantee Marketplace\n\nComplete API reference for the e-BGX platform built on Firebase Firestore.\n\n**Base URL:** `https://firestore.googleapis.com/v1/projects/e-bgxcom/databases/(default)/documents`\n\n## Authentication\nAll requests require a Firebase ID Token in the `Authorization` header:\n```\nAuthorization: Bearer {{id_token}}\n```\n\n## User Roles\n- **Applicant** — Companies applying for Bank Guarantees\n- **Bank** — Partner banks quoting and issuing BGs\n- **Admin** — e-BGX platform administrators\n\n## BG Status Lifecycle\n`PROCESSING → OFFER_ACCEPTED → FD_REQUESTED → FD_PAID → BG_DRAFTING → ISSUED`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "ebgx-platform-api-v1"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://firestore.googleapis.com/v1/projects/e-bgxcom/databases/(default)/documents", "type": "string" },
+    { "key": "id_token", "value": "YOUR_FIREBASE_ID_TOKEN", "type": "string" },
+    { "key": "project_id", "value": "e-bgxcom", "type": "string" },
+    { "key": "applicant_id", "value": "", "type": "string" },
+    { "key": "bank_id", "value": "", "type": "string" },
+    { "key": "bg_doc_id", "value": "", "type": "string" },
+    { "key": "offer_id", "value": "", "type": "string" },
+    { "key": "payment_request_id", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{id_token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "🔑 Auth — Get ID Token",
+      "description": "Exchange Firebase credentials for an ID token to use in all subsequent requests.",
+      "item": [
+        {
+          "name": "Sign In (Get ID Token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyDDAjt2ljkc97WR3p6I1rfoA_Db-GdDsCA",
+              "host": ["identitytoolkit.googleapis.com"],
+              "path": ["v1", "accounts:signInWithPassword"],
+              "query": [{ "key": "key", "value": "AIzaSyDDAjt2ljkc97WR3p6I1rfoA_Db-GdDsCA" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"yourpassword\",\n  \"returnSecureToken\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Signs in a user and returns an `idToken`. Copy the `idToken` value and set it as the `id_token` collection variable.\n\n**Response field to copy:** `idToken`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "📋 BG Applications",
+      "description": "Create and manage Bank Guarantee applications. Collection: `bg_applications`",
+      "item": [
+        {
+          "name": "Create BG Application",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_applications", "host": ["{{base_url}}"], "path": ["bg_applications"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_id\": { \"stringValue\": \"BG-1001\" },\n    \"applicant_id\": { \"stringValue\": \"{{applicant_id}}\" },\n    \"applicant_name\": { \"stringValue\": \"Acme Corp Pvt Ltd\" },\n    \"applicant_pan\": { \"stringValue\": \"AAACA1234A\" },\n    \"applicant_gstin\": { \"stringValue\": \"27AAACA1234A1Z5\" },\n    \"bg_type\": { \"stringValue\": \"Performance BG\" },\n    \"amount_inr\": { \"integerValue\": \"5000000\" },\n    \"beneficiary_name\": { \"stringValue\": \"NHAI\" },\n    \"beneficiary_address\": { \"stringValue\": \"New Delhi\" },\n    \"tender_number\": { \"stringValue\": \"NH-45/2025\" },\n    \"validity_months\": { \"integerValue\": \"24\" },\n    \"required_by_date\": { \"stringValue\": \"2026-04-01\" },\n    \"status\": { \"stringValue\": \"PROCESSING\" },\n    \"platform_fee_paid\": { \"booleanValue\": false },\n    \"offers\": { \"arrayValue\": { \"values\": [] } },\n    \"documents\": { \"arrayValue\": { \"values\": [] } },\n    \"payments\": { \"arrayValue\": { \"values\": [] } },\n    \"audit_trail\": { \"arrayValue\": { \"values\": [] } }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates a new BG application. Sets status to `PROCESSING` and broadcasts to all banks.\n\n**Role:** Applicant\n\n**Returns:** Firestore document with the new `bg_doc_id` in the `name` field."
+          },
+          "response": []
+        },
+        {
+          "name": "Get BG Application",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}", "host": ["{{base_url}}"], "path": ["bg_applications", "{{bg_doc_id}}"] },
+            "description": "Fetch a single BG application by Firestore document ID.\n\n**Role:** Any authenticated user"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Applicant's BGs",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_applications\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"applicant_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{applicant_id}}\" }\n      }\n    },\n    \"orderBy\": [{ \"field\": { \"fieldPath\": \"created_at\" }, \"direction\": \"DESCENDING\" }]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all BG applications for a specific applicant, ordered by creation date descending.\n\n**Role:** Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All BGs (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_applications\" }],\n    \"orderBy\": [{ \"field\": { \"fieldPath\": \"created_at\" }, \"direction\": \"DESCENDING\" }]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all BG applications across all applicants.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Update BG Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}?updateMask.fieldPaths=status&updateMask.fieldPaths=updated_at",
+              "host": ["{{base_url}}"],
+              "path": ["bg_applications", "{{bg_doc_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "status" },
+                { "key": "updateMask.fieldPaths", "value": "updated_at" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"OFFER_ACCEPTED\" },\n    \"updated_at\": { \"stringValue\": \"2026-03-12T00:00:00.000Z\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Updates the status of a BG application.\n\n**Role:** Admin / System\n\n**Valid statuses:** `DRAFT` → `OPEN` → `QUOTED` → `PROCESSING` → `OFFER_ACCEPTED` → `FD_REQUESTED` → `FD_PAID` → `BG_DRAFTING` → `ISSUED`"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Market Feed (Bank)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_applications\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"status\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"PROCESSING\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all BG applications with `status=PROCESSING`. This is the open market feed visible to all partner banks.\n\n**Role:** Bank"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Issuance BGs (Bank)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_applications\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"accepted_bank_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bank_id}}\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all BGs where this bank's offer was accepted. Used for the bank's issuance desk.\n\n**Role:** Bank"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🏦 Bank Offers",
+      "description": "Submit, update, and accept bank offers for BG applications. Collection: `bg_offers`",
+      "item": [
+        {
+          "name": "Submit Bank Offer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_offers", "host": ["{{base_url}}"], "path": ["bg_offers"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"offer_id\": { \"stringValue\": \"OFR-1234567890\" },\n    \"bg_id\": { \"stringValue\": \"BG-1001\" },\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"bank_id\": { \"stringValue\": \"{{bank_id}}\" },\n    \"bank_name\": { \"stringValue\": \"HDFC Bank\" },\n    \"applicant_id\": { \"stringValue\": \"{{applicant_id}}\" },\n    \"applicant_name\": { \"stringValue\": \"Acme Corp Pvt Ltd\" },\n    \"bg_amount\": { \"integerValue\": \"5000000\" },\n    \"bg_type\": { \"stringValue\": \"Performance BG\" },\n    \"validity_months\": { \"integerValue\": \"24\" },\n    \"commission_rate\": { \"doubleValue\": 1.5 },\n    \"fd_margin\": { \"doubleValue\": 100 },\n    \"offer_valid_days\": { \"integerValue\": \"30\" },\n    \"conditions\": { \"stringValue\": \"FD to be opened with HDFC Bank\" },\n    \"valid_till\": { \"stringValue\": \"2026-04-12T00:00:00.000Z\" },\n    \"status\": { \"stringValue\": \"PENDING\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Bank submits a new offer for a BG application. Creates a record in `bg_offers` with `status=PENDING`.\n\n**Role:** Bank\n\n**Returns:** Document with Firestore offer ID"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Bank Offer",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_offers/{{offer_id}}?updateMask.fieldPaths=commission_rate&updateMask.fieldPaths=fd_margin&updateMask.fieldPaths=offer_valid_days&updateMask.fieldPaths=conditions&updateMask.fieldPaths=valid_till",
+              "host": ["{{base_url}}"],
+              "path": ["bg_offers", "{{offer_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "commission_rate" },
+                { "key": "updateMask.fieldPaths", "value": "fd_margin" },
+                { "key": "updateMask.fieldPaths", "value": "offer_valid_days" },
+                { "key": "updateMask.fieldPaths", "value": "conditions" },
+                { "key": "updateMask.fieldPaths", "value": "valid_till" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"commission_rate\": { \"doubleValue\": 1.25 },\n    \"fd_margin\": { \"doubleValue\": 100 },\n    \"offer_valid_days\": { \"integerValue\": \"30\" },\n    \"conditions\": { \"stringValue\": \"Updated terms\" },\n    \"valid_till\": { \"stringValue\": \"2026-04-12T00:00:00.000Z\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Updates commission rate, FD margin, validity, and conditions on an existing offer.\n\n**Role:** Bank"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Offers by Bank",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_offers\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"bank_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bank_id}}\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all offers submitted by a specific bank.\n\n**Role:** Bank"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Offers for Applicant",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_offers\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"applicant_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{applicant_id}}\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all offers across all BGs for a given applicant.\n\n**Role:** Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Accept Offer",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_offers/{{offer_id}}?updateMask.fieldPaths=status",
+              "host": ["{{base_url}}"],
+              "path": ["bg_offers", "{{offer_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "status" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"ACCEPTED\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Accepts a bank offer. Also update the BG application (use `Update BG Status` to set `OFFER_ACCEPTED`, `accepted_bank_id`, `accepted_bank_name`), and reject all other PENDING offers.\n\n**Role:** Applicant\n\n> ⚠️ In the SDK this is done atomically via `writeBatch`. If calling directly, perform all three updates."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "💬 Messaging",
+      "description": "Real-time chat between applicant, bank, and admin per BG. Collection: `bg_messages`",
+      "item": [
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_messages", "host": ["{{base_url}}"], "path": ["bg_messages"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"sender_id\": { \"stringValue\": \"{{applicant_id}}\" },\n    \"sender_name\": { \"stringValue\": \"Acme Corp\" },\n    \"sender_role\": { \"stringValue\": \"applicant\" },\n    \"message\": { \"stringValue\": \"Please expedite the BG issuance.\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Sends a message on a BG thread.\n\n**Role:** Bank / Applicant / Admin\n\n**sender_role values:** `bank` | `applicant` | `admin`"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Messages",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_messages\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"bg_doc_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bg_doc_id}}\" }\n      }\n    },\n    \"orderBy\": [{ \"field\": { \"fieldPath\": \"created_at\" }, \"direction\": \"ASCENDING\" }]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all messages for a BG thread in chronological order.\n\n**Role:** Bank / Applicant / Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "📄 Documents",
+      "description": "Document upload records per BG (Draft BG, Final BG, General). Collection: `bg_documents`",
+      "item": [
+        {
+          "name": "Add Document Record",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_documents", "host": ["{{base_url}}"], "path": ["bg_documents"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"uploader_id\": { \"stringValue\": \"{{bank_id}}\" },\n    \"uploader_name\": { \"stringValue\": \"HDFC Bank\" },\n    \"uploader_role\": { \"stringValue\": \"bank\" },\n    \"file_name\": { \"stringValue\": \"draft_bg_BG-1001.pdf\" },\n    \"file_url\": { \"stringValue\": \"https://storage.googleapis.com/e-bgxcom.appspot.com/bg_docs/draft_bg.pdf\" },\n    \"file_size\": { \"integerValue\": \"204800\" },\n    \"note\": { \"stringValue\": \"Draft BG — Awaiting applicant approval\" },\n    \"doc_type\": { \"stringValue\": \"DRAFT_BG\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Adds a document record after uploading the file to Firebase Storage.\n\n**Role:** Bank / Applicant / Admin\n\n**doc_type values:** `DRAFT_BG` | `FINAL_BG` | `GENERAL`"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Document Records",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_documents\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"bg_doc_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bg_doc_id}}\" }\n      }\n    },\n    \"orderBy\": [{ \"field\": { \"fieldPath\": \"uploaded_at\" }, \"direction\": \"DESCENDING\" }]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all document records for a BG, ordered by upload date descending.\n\n**Role:** Bank / Applicant / Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "💳 FD & Bank Payment Requests",
+      "description": "FD deposit and bank fee payment requests. Collection: `bg_payment_requests`",
+      "item": [
+        {
+          "name": "Create FD Request",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_payment_requests", "host": ["{{base_url}}"], "path": ["bg_payment_requests"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"bank_id\": { \"stringValue\": \"{{bank_id}}\" },\n    \"bank_name\": { \"stringValue\": \"HDFC Bank\" },\n    \"applicant_id\": { \"stringValue\": \"{{applicant_id}}\" },\n    \"description\": { \"stringValue\": \"FD Margin + Bank Commission\" },\n    \"amount\": { \"integerValue\": \"5114000\" },\n    \"payment_link\": { \"stringValue\": \"https://payment.example.com/link\" },\n    \"status\": { \"stringValue\": \"PENDING\" },\n    \"receipt_url\": { \"stringValue\": \"\" },\n    \"receipt_note\": { \"stringValue\": \"\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Bank raises a payment request for FD margin + fees. Also update the BG status to `FD_REQUESTED`.\n\n**Role:** Bank\n\n**Status flow:** `PENDING` → `RECEIPT_UPLOADED` → `APPROVED` / `REJECTED`"
+          },
+          "response": []
+        },
+        {
+          "name": "Get FD Requests for BG",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_payment_requests\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"bg_doc_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bg_doc_id}}\" }\n      }\n    },\n    \"orderBy\": [{ \"field\": { \"fieldPath\": \"created_at\" }, \"direction\": \"DESCENDING\" }]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all payment requests for a specific BG.\n\n**Role:** Bank / Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload FD Receipt",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_payment_requests/{{payment_request_id}}?updateMask.fieldPaths=status&updateMask.fieldPaths=receipt_url&updateMask.fieldPaths=receipt_note",
+              "host": ["{{base_url}}"],
+              "path": ["bg_payment_requests", "{{payment_request_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "status" },
+                { "key": "updateMask.fieldPaths", "value": "receipt_url" },
+                { "key": "updateMask.fieldPaths", "value": "receipt_note" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"RECEIPT_UPLOADED\" },\n    \"receipt_url\": { \"stringValue\": \"https://storage.googleapis.com/e-bgxcom.appspot.com/receipts/receipt.pdf\" },\n    \"receipt_note\": { \"stringValue\": \"NEFT transfer ref: HDFC123456\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Applicant uploads payment receipt. Also update BG status to `FD_PAID`.\n\n**Role:** Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve FD Request",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_payment_requests/{{payment_request_id}}?updateMask.fieldPaths=status&updateMask.fieldPaths=approved_at",
+              "host": ["{{base_url}}"],
+              "path": ["bg_payment_requests", "{{payment_request_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "status" },
+                { "key": "updateMask.fieldPaths", "value": "approved_at" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"APPROVED\" },\n    \"approved_at\": { \"stringValue\": \"2026-03-12T00:00:00.000Z\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Bank approves the payment receipt. Also update BG status to `BG_DRAFTING`.\n\n**Role:** Bank\n\n> ⚠️ In the SDK this is a batch write — update both `bg_payment_requests` and `bg_applications` together."
+          },
+          "response": []
+        },
+        {
+          "name": "Reject FD Request",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_payment_requests/{{payment_request_id}}?updateMask.fieldPaths=status",
+              "host": ["{{base_url}}"],
+              "path": ["bg_payment_requests", "{{payment_request_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "status" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"REJECTED\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Bank rejects the payment receipt. Reverts BG status to `FD_REQUESTED` so applicant can re-upload.\n\n**Role:** Bank"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Bank Payments",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_payment_requests\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"bank_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bank_id}}\" }\n      }\n    },\n    \"orderBy\": [{ \"field\": { \"fieldPath\": \"created_at\" }, \"direction\": \"DESCENDING\" }]\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all payment requests for a bank across all BGs.\n\n**Role:** Bank"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🏛️ Processing Fees (e-BGX)",
+      "description": "Platform processing fee management. Collection: `bg_processing_fees` | Settings: `settings/processing_fee`",
+      "item": [
+        {
+          "name": "Get Processing Fee Setting",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/settings/processing_fee", "host": ["{{base_url}}"], "path": ["settings", "processing_fee"] },
+            "description": "Reads the current platform processing fee configuration.\n\n**Role:** Any authenticated user"
+          },
+          "response": []
+        },
+        {
+          "name": "Set Processing Fee (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/settings/processing_fee", "host": ["{{base_url}}"], "path": ["settings", "processing_fee"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"amount\": { \"integerValue\": \"5000\" },\n    \"description\": { \"stringValue\": \"e-BGX Platform Processing Fee\" },\n    \"payment_link\": { \"stringValue\": \"https://razorpay.com/payment-link/ebgx\" },\n    \"updated_by\": { \"stringValue\": \"admin_uid\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates or updates the platform processing fee configuration.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Processing Fee Payment",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/bg_processing_fees/{{bg_doc_id}}", "host": ["{{base_url}}"], "path": ["bg_processing_fees", "{{bg_doc_id}}"] },
+            "description": "Reads the processing fee payment record for a specific BG. Document ID = bg_doc_id.\n\n**Role:** Applicant / Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Processing Fee Receipt",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_processing_fees/{{bg_doc_id}}?updateMask.fieldPaths=status&updateMask.fieldPaths=receipt_url&updateMask.fieldPaths=receipt_note",
+              "host": ["{{base_url}}"],
+              "path": ["bg_processing_fees", "{{bg_doc_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "status" },
+                { "key": "updateMask.fieldPaths", "value": "receipt_url" },
+                { "key": "updateMask.fieldPaths", "value": "receipt_note" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"RECEIPT_UPLOADED\" },\n    \"receipt_url\": { \"stringValue\": \"https://storage.googleapis.com/e-bgxcom.appspot.com/fees/receipt.pdf\" },\n    \"receipt_note\": { \"stringValue\": \"UPI transaction ID: 123456789\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Applicant uploads the processing fee payment receipt.\n\n**Role:** Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Processing Fee (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_processing_fees/{{bg_doc_id}}?updateMask.fieldPaths=status&updateMask.fieldPaths=approved_at",
+              "host": ["{{base_url}}"],
+              "path": ["bg_processing_fees", "{{bg_doc_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "status" },
+                { "key": "updateMask.fieldPaths", "value": "approved_at" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"APPROVED\" },\n    \"approved_at\": { \"stringValue\": \"2026-03-12T00:00:00.000Z\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Admin approves the processing fee payment. Also set `platform_fee_paid=true` on the BG application.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Pending Processing Fees (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_processing_fees\" }],\n    \"where\": {\n      \"compositeFilter\": {\n        \"op\": \"OR\",\n        \"filters\": [\n          { \"fieldFilter\": { \"field\": { \"fieldPath\": \"status\" }, \"op\": \"EQUAL\", \"value\": { \"stringValue\": \"PENDING\" } } },\n          { \"fieldFilter\": { \"field\": { \"fieldPath\": \"status\" }, \"op\": \"EQUAL\", \"value\": { \"stringValue\": \"RECEIPT_UPLOADED\" } } }\n        ]\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all processing fees with status `PENDING` or `RECEIPT_UPLOADED`.\n\n**Role:** Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "📝 Draft BG + Final BG",
+      "description": "Bank uploads draft BG for applicant review, applicant approves/rejects, bank issues final BG.",
+      "item": [
+        {
+          "name": "Upload Draft BG (Bank)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_documents", "host": ["{{base_url}}"], "path": ["bg_documents"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"uploader_id\": { \"stringValue\": \"{{bank_id}}\" },\n    \"uploader_name\": { \"stringValue\": \"HDFC Bank\" },\n    \"uploader_role\": { \"stringValue\": \"bank\" },\n    \"file_name\": { \"stringValue\": \"draft_bg.pdf\" },\n    \"file_url\": { \"stringValue\": \"https://storage.googleapis.com/e-bgxcom.appspot.com/drafts/draft_bg.pdf\" },\n    \"file_size\": { \"integerValue\": \"204800\" },\n    \"note\": { \"stringValue\": \"Draft BG — Awaiting applicant approval\" },\n    \"doc_type\": { \"stringValue\": \"DRAFT_BG\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Step 1: Bank uploads the draft BG PDF. Also update BG: `status=BG_DRAFTING`, `draft_bg_approved=false`.\n\n**Role:** Bank"
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Draft BG (Applicant)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}?updateMask.fieldPaths=draft_bg_approved",
+              "host": ["{{base_url}}"],
+              "path": ["bg_applications", "{{bg_doc_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "draft_bg_approved" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"draft_bg_approved\": { \"booleanValue\": true }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Applicant approves the draft BG. Sets `draft_bg_approved=true`.\n\n**Role:** Applicant\n\n> ⚠️ Firestore rule requires BG to be in `BG_DRAFTING` status for applicant to update."
+          },
+          "response": []
+        },
+        {
+          "name": "Reject Draft BG (Applicant)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}?updateMask.fieldPaths=draft_bg_approved",
+              "host": ["{{base_url}}"],
+              "path": ["bg_applications", "{{bg_doc_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "draft_bg_approved" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"draft_bg_approved\": { \"booleanValue\": false }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Applicant rejects the draft BG. Bank must upload a revised draft.\n\n**Role:** Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Final BG + Issue (Bank)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_documents", "host": ["{{base_url}}"], "path": ["bg_documents"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"uploader_id\": { \"stringValue\": \"{{bank_id}}\" },\n    \"uploader_name\": { \"stringValue\": \"HDFC Bank\" },\n    \"uploader_role\": { \"stringValue\": \"bank\" },\n    \"file_name\": { \"stringValue\": \"final_bg_BG-1001.pdf\" },\n    \"file_url\": { \"stringValue\": \"https://storage.googleapis.com/e-bgxcom.appspot.com/final/final_bg.pdf\" },\n    \"file_size\": { \"integerValue\": \"512000\" },\n    \"note\": { \"stringValue\": \"Final Bank Guarantee. BG No: HDFC/BG/2026/001\" },\n    \"doc_type\": { \"stringValue\": \"FINAL_BG\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Step 1: Upload final BG document. Then update BG: `status=ISSUED`, `official_bg_number`, `issued_at`.\n\n**Role:** Bank"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "👤 User Management",
+      "description": "Applicant and bank user management. Collection: `users`",
+      "item": [
+        {
+          "name": "Get All Applicants (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"users\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"role\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"applicant\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all applicant users.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Pending KYC Applicants (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"users\" }],\n    \"where\": {\n      \"compositeFilter\": {\n        \"op\": \"AND\",\n        \"filters\": [\n          { \"fieldFilter\": { \"field\": { \"fieldPath\": \"role\" }, \"op\": \"EQUAL\", \"value\": { \"stringValue\": \"applicant\" } } },\n          { \"fieldFilter\": { \"field\": { \"fieldPath\": \"profileComplete\" }, \"op\": \"EQUAL\", \"value\": { \"booleanValue\": true } } },\n          { \"fieldFilter\": { \"field\": { \"fieldPath\": \"kycStatus\" }, \"op\": \"EQUAL\", \"value\": { \"stringValue\": \"PENDING\" } } }\n        ]\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns applicants pending KYC review.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Update KYC Status (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/users/{{applicant_id}}?updateMask.fieldPaths=kycStatus",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{applicant_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "kycStatus" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"kycStatus\": { \"stringValue\": \"APPROVED\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Updates KYC status of an applicant.\n\n**Role:** Admin\n\n**Values:** `APPROVED` | `REJECTED`"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Banks (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"users\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"role\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"bank\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all bank users.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Bank Status (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/users/{{bank_id}}?updateMask.fieldPaths=status",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{bank_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "status" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"ACTIVE\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Updates bank account status.\n\n**Role:** Admin\n\n**Values:** `ACTIVE` | `REJECTED` | `SUSPENDED`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "⚙️ Admin Controls",
+      "description": "Admin-only BG management actions and platform configuration.",
+      "item": [
+        {
+          "name": "Cancel BG Request",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}?updateMask.fieldPaths=status",
+              "host": ["{{base_url}}"],
+              "path": ["bg_applications", "{{bg_doc_id}}"],
+              "query": [{ "key": "updateMask.fieldPaths", "value": "status" }]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"DRAFT\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Admin cancels a BG request, reverting status to `DRAFT`.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Waive Platform Fee",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}?updateMask.fieldPaths=platform_fee_paid&updateMask.fieldPaths=platform_fee_waived",
+              "host": ["{{base_url}}"],
+              "path": ["bg_applications", "{{bg_doc_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "platform_fee_paid" },
+                { "key": "updateMask.fieldPaths", "value": "platform_fee_waived" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"platform_fee_paid\": { \"booleanValue\": true },\n    \"platform_fee_waived\": { \"booleanValue\": true }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Admin waives the platform processing fee for a BG.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Rebroadcast BG",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/bg_applications/{{bg_doc_id}}?updateMask.fieldPaths=status&updateMask.fieldPaths=accepted_bank_id&updateMask.fieldPaths=accepted_bank_name",
+              "host": ["{{base_url}}"],
+              "path": ["bg_applications", "{{bg_doc_id}}"],
+              "query": [
+                { "key": "updateMask.fieldPaths", "value": "status" },
+                { "key": "updateMask.fieldPaths", "value": "accepted_bank_id" },
+                { "key": "updateMask.fieldPaths", "value": "accepted_bank_name" }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"status\": { \"stringValue\": \"PROCESSING\" },\n    \"accepted_bank_id\": { \"nullValue\": null },\n    \"accepted_bank_name\": { \"nullValue\": null }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Admin re-broadcasts a BG to all banks by resetting it to `PROCESSING` and clearing the accepted bank.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Platform Config",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/settings/platform_config", "host": ["{{base_url}}"], "path": ["settings", "platform_config"] },
+            "description": "Reads global platform configuration.\n\n**Role:** Admin"
+          },
+          "response": []
+        },
+        {
+          "name": "Save Platform Config",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/settings/platform_config", "host": ["{{base_url}}"], "path": ["settings", "platform_config"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"platform_name\": { \"stringValue\": \"e-BGX\" },\n    \"platform_url\": { \"stringValue\": \"https://e-bgx.com\" },\n    \"min_bg_amount\": { \"integerValue\": \"100000\" },\n    \"max_validity_months\": { \"integerValue\": \"60\" },\n    \"offer_response_days\": { \"integerValue\": \"7\" },\n    \"updated_by\": { \"stringValue\": \"admin_uid\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates or overwrites the global platform configuration.\n\n**Role:** Admin"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🔄 Amendment Requests",
+      "description": "Amendment and renewal requests on issued BGs. Collection: `bg_amendments`",
+      "item": [
+        {
+          "name": "Create Amendment Request",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/bg_amendments", "host": ["{{base_url}}"], "path": ["bg_amendments"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fields\": {\n    \"bg_doc_id\": { \"stringValue\": \"{{bg_doc_id}}\" },\n    \"bg_id\": { \"stringValue\": \"BG-1001\" },\n    \"applicant_id\": { \"stringValue\": \"{{applicant_id}}\" },\n    \"applicant_name\": { \"stringValue\": \"Acme Corp Pvt Ltd\" },\n    \"extend_date\": { \"booleanValue\": true },\n    \"new_expiry_date\": { \"stringValue\": \"2027-06-30\" },\n    \"change_amount\": { \"booleanValue\": false },\n    \"new_amount\": { \"integerValue\": \"0\" },\n    \"doc_url\": { \"stringValue\": \"\" },\n    \"status\": { \"stringValue\": \"PENDING\" },\n    \"resolved_at\": { \"stringValue\": \"\" },\n    \"resolved_by\": { \"stringValue\": \"\" },\n    \"remarks\": { \"stringValue\": \"\" }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates an amendment/renewal request on an issued BG.\n\n**Role:** Applicant"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Amendment Requests",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "https://firestore.googleapis.com/v1/projects/{{project_id}}/databases/(default)/documents:runQuery",
+              "host": ["firestore.googleapis.com"],
+              "path": ["v1", "projects", "{{project_id}}", "databases", "(default)", "documents:runQuery"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"structuredQuery\": {\n    \"from\": [{ \"collectionId\": \"bg_amendments\" }],\n    \"where\": {\n      \"fieldFilter\": {\n        \"field\": { \"fieldPath\": \"bg_doc_id\" },\n        \"op\": \"EQUAL\",\n        \"value\": { \"stringValue\": \"{{bg_doc_id}}\" }\n      }\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Returns all amendment requests for a specific BG.\n\n**Role:** Admin / Bank"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

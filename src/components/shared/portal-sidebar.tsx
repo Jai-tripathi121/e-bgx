@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import {
   LayoutDashboard, FileText, Inbox, CheckSquare, CreditCard, Award,
   Navigation, RefreshCw, User, BarChart3, Settings, Building2,
-  ChevronRight, LogOut, Bell, HelpCircle,
+  ChevronRight, LogOut, Bell, HelpCircle, FolderOpen, PieChart,
 } from "lucide-react";
 
 interface NavItem {
@@ -31,6 +31,8 @@ const applicantNav: NavItem[] = [
   { label: "Track BG",        href: "/applicant/track",       icon: <Navigation size={16} /> },
   { label: "Issued BGs",      href: "/applicant/issued",      icon: <Award size={16} /> },
   { label: "Payments",        href: "/applicant/payments",    icon: <CreditCard size={16} /> },
+  { label: "Documents",       href: "/applicant/documents",   icon: <FolderOpen size={16} /> },
+  { label: "Reports",         href: "/applicant/reports",     icon: <PieChart size={16} /> },
   { label: "Renewals",        href: "/applicant/renewals",    icon: <RefreshCw size={16} /> },
   { label: "Profile",         href: "/applicant/profile",     icon: <User size={16} /> },
 ];
@@ -41,6 +43,7 @@ const bankNav: NavItem[] = [
   { label: "Offer Tracker",   href: "/bank/offers",           icon: <CheckSquare size={16} /> },
   { label: "Issuance Desk",   href: "/bank/issuance",         icon: <FileText size={16} /> },
   { label: "Payments",        href: "/bank/payments",         icon: <CreditCard size={16} /> },
+  { label: "Documents",       href: "/bank/documents",        icon: <FolderOpen size={16} /> },
   { label: "Analytics",       href: "/bank/analytics",        icon: <BarChart3 size={16} /> },
   { label: "Bank Profile",    href: "/bank/profile",          icon: <Building2 size={16} /> },
 ];
